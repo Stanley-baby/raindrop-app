@@ -78,8 +78,8 @@ const json = (body, status, request, env, extraHeaders = {}) => {
     return new Response(JSON.stringify(body), { status, headers })
 }
 
-const error = (code, status, request, env, errorMessage = code) =>
-    json({ result: false, error: code, errorMessage }, status, request, env)
+const error = (code, status, request, env, errorMessage = code, details = {}) =>
+    json({ result: false, error: code, errorMessage, ...details }, status, request, env)
 
 const integerEnv = (env, names, fallback) => {
     for (const name of names) {
@@ -2954,7 +2954,7 @@ const auditRoute = request => {
         '/v1/auth/apple', '/v1/auth/apple/callback', '/v1/auth/tfa',
         '/v1/sessions', '/v1/collections/all', '/v1/collections', '/v1/collections/clean',
         '/v1/collection', '/v1/tags/recent', '/v1/tags/0', '/v1/tag',
-        '/v1/raindrops', '/v1/raindrops/changes', '/v1/raindrop', '/v1/user', '/v1/user/quota',
+        '/v1/raindrops', '/v1/raindrops/links', '/v1/raindrops/changes', '/v1/raindrop', '/v1/user', '/v1/user/quota',
         '/v1/backup', '/v1/backups', '/v1/backup/connections',
         '/v1/user/connect/google', '/v1/user/connect/google/revoke', '/v1/user/deletion',
         '/v1/user/connect/apple', '/v1/user/connect/apple/revoke', '/v1/user/tfa',
@@ -3057,11 +3057,31 @@ const usageLimit = env => integerEnv(env, ['USAGE_QUOTA_DAILY', 'USAGE_QUOTA', '
 const aiDefaultModel = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 const aiMessageLimit = 8000
 const aiHistoryLimit = 50
+const aiNotePromptLimit = 4000
+const defaultAiNotePrompt = 'Write a concise, high-value note for a future reader of this bookmark. Use the supplied title, description, tags, highlights, URL, and existing note to explain why it matters, its key takeaway or capability, when to reopen it, and a useful next step or caveat when supported. Add value instead of repeating the description. Do not invent facts, details, people, or claims. Use the requested language. Return only the final note, with no heading or reasoning.'
+const aiCollectionTopLevels = [
+    '技术与开发',
+    '工作与项目',
+    '学习与研究',
+    '生活与实用',
+    '旅行与地点',
+    '内容与阅读',
+    '媒体与娱乐',
+    '待整理'
+]
 const aiModel = env => String(env.AI_MODEL || aiDefaultModel)
 const aiProviderModelLimit = 200
 const aiProviderKeyLimit = 4096
 
 const aiProviderFailure = (code, message) => Object.assign(new Error(message), { providerCode: code })
+
+const aiProviderError = (request, env, providerName, code, message, status = 503) =>
+    error(code, status, request, env, message, {
+        provider: providerName,
+        fallbackProviders: providerName === 'custom' ? ['workers_ai'] : []
+    })
+
+const aiNotePrompt = value => String(value || '').trim().slice(0, aiNotePromptLimit) || defaultAiNotePrompt
 
 const aiProviderEndpoint = value => {
     const checked = validateFetchableUrl(value)
@@ -3169,8 +3189,9 @@ const publicAiProvider = row => row ? {
     verifiedAt: taskDate(row.verified_at)
 } : { configured: false, endpoint: '', model: '', verifiedAt: null }
 
-const customAiMessages = (messages, tools) => ({
+const customAiMessages = (messages, tools, thinking) => ({
     messages,
+    ...(thinking ? { reasoning_effort: 'medium' } : {}),
     ...(Array.isArray(tools) ? { tools: aiProviderTools(tools), ...(tools.length ? { tool_choice: 'auto' } : {}) } : {})
 })
 
@@ -3325,9 +3346,27 @@ const aiLanguage = (value, request) => String(value || request.headers.get('Acce
 const aiSuggestionCandidates = async (env, userId) => {
     const collections = (await env.DB.prepare('SELECT id, title, parent_id FROM collections WHERE user_id = ? AND removed_at IS NULL ORDER BY title LIMIT 100').bind(userId).all()).results || []
     const tags = await tagItems(env, userId, 0, '', '-count')
+    const byId = new Map(collections.map(item => [Number(item.id), item]))
+    const collectionPath = item => {
+        const path = []
+        const seen = new Set()
+        let current = item
+        while (current && !seen.has(Number(current.id))) {
+            seen.add(Number(current.id))
+            path.unshift(String(current.title || '').trim())
+            current = byId.get(Number(current.parent_id))
+        }
+        return path.filter(Boolean)
+    }
     return {
-        collections: collections.map(item => ({ id: Number(item.id), title: String(item.title || '') })).filter(item => item.id > 0 && item.title),
-        tags: tags.map(item => String(item._id || '')).filter(Boolean).slice(0, 100)
+        collections: collections.map(item => ({
+            id: Number(item.id),
+            title: String(item.title || ''),
+            parentId: Number(item.parent_id) > 0 ? Number(item.parent_id) : null,
+            path: collectionPath(item)
+        })).filter(item => item.id > 0 && item.title),
+        tags: tags.map(item => String(item._id || '')).filter(Boolean).slice(0, 100),
+        topLevelCategories: aiCollectionTopLevels
     }
 }
 
@@ -3339,40 +3378,322 @@ const aiJson = value => {
     try { return JSON.parse(text.slice(start, end + 1)) } catch { return null }
 }
 
+const aiConfidence = (value, fallback = 0.5) => {
+    if (typeof value === 'string') {
+        const text = value.trim().toLowerCase()
+        if (text === 'high') return 0.9
+        if (text === 'medium' || text === 'mid') return 0.65
+        if (text === 'low') return 0.35
+        const percent = text.match(/^(\d+(?:\.\d+)?)\s*%$/)
+        if (percent) value = Number(percent[1]) / 100
+    }
+    const number = Number(value)
+    if (!Number.isFinite(number)) return fallback
+    const normalized = number > 1 ? number / 100 : number
+    return Math.max(0, Math.min(1, normalized))
+}
+
+const aiConfidenceTier = confidence => confidence >= 0.8 ? 'high' : confidence >= 0.55 ? 'medium' : 'low'
+
+const aiCollectionTitleKey = value => String(value || '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+
+const aiCollectionTopLevel = value => {
+    const key = aiCollectionTitleKey(value)
+    return aiCollectionTopLevels.find(title => aiCollectionTitleKey(title) === key) || ''
+}
+
+const aiCollectionCategoryFor = bookmark => {
+    const source = [bookmark.title, bookmark.description, bookmark.note, bookmark.url].join(' ').normalize('NFKC')
+    if (/旅行|旅游|自由行|景点|攻略|路线|东京|日本|travel|tour|itinerary|tokyo|japan/i.test(source)) return '旅行与地点'
+    if (/菜谱|食谱|做法|料理|烹饪|美食|recipe|cooking|food/i.test(source)) return '生活与实用'
+    if (/python|asyncio|javascript|typescript|react|node|api|iptv|代码|编程|开发|软件|工具/i.test(source)) return '技术与开发'
+    if (/课程|学习|研究|论文|教程|文档/u.test(source)) return '学习与研究'
+    if (/视频|电影|音乐|播客|直播|游戏/u.test(source)) return '媒体与娱乐'
+    if (/文章|阅读|博客|新闻|书籍/u.test(source)) return '内容与阅读'
+    if (/项目|工作|会议|客户|计划/u.test(source)) return '工作与项目'
+    return '待整理'
+}
+
+const aiCollectionTitleTokens = value => aiCollectionTitleKey(value)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(token => token.length > 3 ? token.replace(/s$/, '') : token)
+
+const aiSimilarCollectionTitle = (left, right) => {
+    const leftTokens = new Set(aiCollectionTitleTokens(left))
+    const rightTokens = new Set(aiCollectionTitleTokens(right))
+    if (!leftTokens.size || !rightTokens.size) return false
+    const overlap = [...leftTokens].filter(token => rightTokens.has(token)).length
+    return overlap >= 2 && overlap / Math.max(leftTokens.size, rightTokens.size) >= 0.66
+}
+
+const aiCollectionTitleAllowed = value => {
+    const title = String(value || '').trim()
+    if (!title || title.length > 80 || title.split(/\s+/).length > 8 || /\d{8,}|[0-9a-f]{8}-[0-9a-f-]{13,}/i.test(title)) return false
+    return !/^(?:test|testing|sample|dummy|junk|untitled|new collection)(?:$|\s)/i.test(title) &&
+        !/\b(?:test|testing|sample|dummy) collection\b/i.test(title) &&
+        !/[。！？：；]/u.test(title)
+}
+
+const aiTagAllowed = (value, bookmarkTitle = '') => {
+    const tag = tagValue(value).normalize('NFKC')
+    const hanLength = (tag.match(/\p{Script=Han}/gu) || []).length
+    const descriptionTag = /^(?:面向|适用于|可用于|第一次).{2,}(?:游客|用户|读者|内容|文章|页面|路线)|^(?:支持|包含|用于|帮助|介绍|提供|说明|建议|提醒).{4,}|^(?:这是|这是一段|该(?:页面|书签|文章)).{2,}|^(?:如何|为什么).+|^(?:for|with|about|how|this|that|supports?|includes?|provides?|designed)\b/iu
+    return tag && tag.length <= 40 && (!hanLength || hanLength <= 8) && tag.toLowerCase() !== String(bookmarkTitle || '').normalize('NFKC').trim().toLowerCase() &&
+        tag.split(/\s+/).length <= 4 && !descriptionTag.test(tag) && !/[，。！？：；]/u.test(tag)
+}
+
+const aiSuggestionHasSignal = bookmark => {
+    const title = String(bookmark.title || '').trim()
+    const description = String(bookmark.description || '').trim()
+    const note = String(bookmark.note || '').trim()
+    if (description || note) return true
+    if (!title) return false
+    return !/^(?:untitled|new bookmark|blank(?: bookmark)?|example domain|no title|unknown|未命名|无标题|新书签|空白(?:书签)?)(?:\s|$)/iu.test(title)
+}
+
+const aiSuggestionReasonRelevant = reason => !/(?:不相关|无关|irrelevant|unrelated|not relevant)/iu.test(String(reason || ''))
+
+const aiSuggestionCollectionRelevant = (candidate, bookmark) => {
+    if (!aiSuggestionHasSignal(bookmark)) return false
+    const haystack = [bookmark.title, bookmark.description, bookmark.note, bookmark.url]
+        .join(' ').normalize('NFKC').toLowerCase()
+    const title = [candidate.title, ...(candidate.path || [])].join(' ')
+    const words = new Set(haystack.split(/[^a-z0-9]+/i).filter(Boolean))
+    if (aiCollectionTitleTokens(title).some(token => {
+        if (/^[a-z0-9]+$/i.test(token)) return words.has(token) || token.length > 2 && haystack.includes(token)
+        return token.length > 1 && haystack.includes(token)
+    })) return true
+    const hanPairs = title.normalize('NFKC').match(/[\p{Script=Han}]{2}/gu) || []
+    return hanPairs.length > 0 && hanPairs.filter(pair => haystack.includes(pair.toLowerCase())).length >= Math.ceil(hanPairs.length / 2)
+}
+
+const aiSuggestionTagRelevant = (tag, bookmark) => {
+    if (!aiSuggestionHasSignal(bookmark)) return false
+    const value = String(tag || '').normalize('NFKC').trim().toLowerCase()
+    const haystack = [bookmark.title, bookmark.description, bookmark.note, bookmark.url]
+        .join(' ').normalize('NFKC').toLowerCase()
+    const words = new Set(haystack.split(/[^a-z0-9]+/i).filter(Boolean))
+    const compactValue = value.replace(/[^a-z0-9\p{Script=Han}]+/giu, '')
+    const compactHaystack = haystack.replace(/[^a-z0-9\p{Script=Han}]+/giu, '')
+    if (/^[a-z0-9]+$/i.test(value)) {
+        if (words.has(value) || value.length > 2 && haystack.includes(value)) return true
+    } else if (haystack.includes(value) || compactValue && compactHaystack.includes(compactValue)) return true
+    const terms = value.split(/[^a-z0-9]+/i).filter(term => term.length > 2)
+    if (terms.length && terms.every(term => words.has(term) || term.length > 2 && haystack.includes(term))) return true
+    const category = aiCollectionCategoryFor(bookmark)
+    if (category === '旅行与地点')
+        return /旅行|旅游|自由行|攻略|路线|景点/u.test(value) && /旅行|旅游|自由行|攻略|路线|景点|东京|日本|travel|tour|itinerary|tokyo|japan/i.test(haystack)
+    if (category === '生活与实用')
+        return /菜谱|食谱|做法|料理|烹饪|美食|中餐|川菜/u.test(value) && /菜谱|食谱|做法|料理|烹饪|美食|川菜|recipe|cooking|food/i.test(haystack)
+    return false
+}
+
 const aiSuggestionResult = (value, candidates, bookmark) => {
     const parsed = aiJson(value) || {}
     const collectionsById = new Map(candidates.collections.map(item => [String(item.id), item]))
-    const collectionsByTitle = new Map(candidates.collections.map(item => [item.title.toLowerCase(), item]))
+    const collectionsByTitle = new Map(candidates.collections.map(item => [aiCollectionTitleKey(item.title), item]))
     const selectedCollections = []
-    for (const item of Array.isArray(parsed.collections) ? parsed.collections : []) {
-        const key = typeof item === 'object' ? item.id ?? item._id ?? item.$id ?? item.collectionId : item
-        const title = typeof item === 'object' ? item.title : ''
-        const candidate = collectionsById.get(String(key)) || collectionsByTitle.get(String(title || '').toLowerCase())
-        if (candidate && !selectedCollections.some(current => current.id === candidate.id)) selectedCollections.push(candidate)
+    for (const [index, item] of (Array.isArray(parsed.collections) ? parsed.collections : []).entries()) {
+        const details = item && typeof item === 'object' ? item : { id: item }
+        const key = details.id ?? details._id ?? details.$id ?? details.collectionId
+        const candidate = collectionsById.get(String(key)) || collectionsByTitle.get(aiCollectionTitleKey(details.title || details.name))
+        if (!candidate || selectedCollections.some(current => current.id === candidate.id) ||
+            selectedCollections.some(current => aiCollectionTitleKey(current.title) === aiCollectionTitleKey(candidate.title) ||
+                aiSimilarCollectionTitle(current.title, candidate.title))) continue
+        const confidence = aiConfidence(details.confidence ?? details.score ?? details.probability, Math.max(0.55, 1 - index * 0.1))
+        const reason = String(details.reason || details.explanation || '').trim().slice(0, 240)
+        if (confidence < 0.55 || !aiSuggestionReasonRelevant(reason) || !aiSuggestionCollectionRelevant(candidate, bookmark)) continue
+        selectedCollections.push({
+            ...candidate,
+            kind: 'existing',
+            confidence,
+            confidenceTier: aiConfidenceTier(confidence),
+            ...(reason ? { reason } : {})
+        })
     }
-    const existingTags = new Set(candidates.tags.map(tag => tag.toLowerCase()))
-    const currentTags = new Set((bookmark.tags || []).map(tag => String(tag).toLowerCase()))
-    const normalizeTags = value => [...new Set((Array.isArray(value) ? value : []).map(tagValue).filter(Boolean))]
-        .filter(tag => !currentTags.has(tag.toLowerCase())).slice(0, 10)
-    const tags = normalizeTags(parsed.tags).filter(tag => existingTags.has(tag.toLowerCase()))
-    const newTags = normalizeTags(parsed.new_tags ?? parsed.newTags).filter(tag => !existingTags.has(tag.toLowerCase()))
+    const existingTags = new Set(candidates.tags.map(tag => String(tag).normalize('NFKC').toLowerCase()))
+    const currentTags = new Set((bookmark.tags || []).map(tag => String(tag).normalize('NFKC').toLowerCase()))
+    const normalizedTags = []
+    const seenTags = new Set(currentTags)
+    for (const value of [
+        ...(Array.isArray(parsed.tags) ? parsed.tags : []),
+        ...(Array.isArray(parsed.new_tags ?? parsed.newTags) ? parsed.new_tags ?? parsed.newTags : [])
+    ]) {
+        const tag = tagValue(value).normalize('NFKC')
+        const key = tag.toLowerCase()
+        if (!aiSuggestionTagRelevant(tag, bookmark) || !aiTagAllowed(tag, bookmark.title) || seenTags.has(key)) continue
+        seenTags.add(key)
+        normalizedTags.push(tag)
+    }
+    const tags = normalizedTags.filter(tag => existingTags.has(tag.toLowerCase())).slice(0, 5)
+    const newTags = normalizedTags
+        .filter(tag => !existingTags.has(tag.toLowerCase()))
+        .slice(0, Math.max(0, 5 - tags.length))
+    const newCollectionValues = !aiSuggestionHasSignal(bookmark) ? [] : Array.isArray(parsed.new_collections) ? parsed.new_collections :
+        Array.isArray(parsed.newCollections) ? parsed.newCollections : []
+    const newCollectionDetails = []
+    for (const [index, item] of newCollectionValues.entries()) {
+        const details = item && typeof item === 'object' ? item : { title: item }
+        const title = String(details.title || details.name || '').trim()
+        const confidence = aiConfidence(details.confidence ?? details.score ?? details.probability, Math.max(0.5, 0.7 - index * 0.1))
+        const reason = String(details.reason || details.explanation || '').trim().slice(0, 240)
+        if (!aiCollectionTitleAllowed(title) || confidence < 0.55 || !aiSuggestionReasonRelevant(reason) || !aiSuggestionCollectionRelevant({ title }, bookmark) || collectionsByTitle.has(aiCollectionTitleKey(title)) ||
+            candidates.collections.some(candidate => aiSimilarCollectionTitle(candidate.title, title)) ||
+            newCollectionDetails.some(candidate => aiCollectionTitleKey(candidate.title) === aiCollectionTitleKey(title) || aiSimilarCollectionTitle(candidate.title, title))) continue
+        const category = aiCollectionTopLevel(details.category || details.top_level || details.topLevel) || aiCollectionCategoryFor(bookmark)
+        const explicitParent = collectionsById.get(String(details.parentId ?? details.parent_id ?? details.parentCollectionId))
+        const parent = explicitParent?.path?.length === 1 ? explicitParent :
+            candidates.collections.find(candidate => candidate.path?.length === 1 && aiCollectionTitleKey(candidate.title) === aiCollectionTitleKey(category))
+        newCollectionDetails.push({
+            title,
+            kind: 'new',
+            category,
+            ...(parent ? { parentId: parent.id } : {}),
+            confidence,
+            confidenceTier: aiConfidenceTier(confidence),
+            ...(reason ? { reason } : {})
+        })
+    }
+    const collections = selectedCollections.slice(0, 5)
+    const newCollections = newCollectionDetails.slice(0, 1).map(item => item.title)
     return {
-        collections: selectedCollections.slice(0, 5),
+        collections,
         tags,
-        newTags
+        newTags,
+        newCollections,
+        newCollectionDetails: newCollectionDetails.slice(0, 1),
+        collectionRecommendations: [
+            ...collections.map(item => ({ ...item, kind: 'existing' })),
+            ...newCollectionDetails.slice(0, 1)
+        ],
+        collectionCategories: aiCollectionTopLevels
     }
 }
 
-const aiFallbackSuggestions = (candidates, bookmark) => {
-    const haystack = [bookmark.title, bookmark.description, bookmark.url].join(' ').toLowerCase()
-    const collections = candidates.collections.filter(item => item.title.toLowerCase().split(/\s+/).some(term => term.length > 2 && haystack.includes(term)))
-    const currentTags = new Set((bookmark.tags || []).map(tag => String(tag).toLowerCase()))
-    const tags = candidates.tags.filter(tag => !currentTags.has(tag.toLowerCase())).slice(0, 5)
-    const newTags = String(bookmark.title || '').split(/\s+/).map(tagValue)
-        .filter(tag => tag && tag.length > 2 && !currentTags.has(tag.toLowerCase()) && !candidates.tags.some(item => item.toLowerCase() === tag.toLowerCase()))
-        .slice(0, 5)
-    return { collections: collections.slice(0, 5), tags, newTags }
+const aiFallbackTagMatches = (tag, haystack) => {
+    const value = String(tag || '').normalize('NFKC').trim().toLowerCase()
+    if (value.length < 2) return false
+    if (/\p{Script=Han}/u.test(value)) return haystack.includes(value)
+    const terms = value.split(/[^a-z0-9]+/i).filter(term => term.length > 2)
+    const words = new Set(haystack.split(/[^a-z0-9]+/i).filter(Boolean))
+    return terms.length > 0 && terms.every(term => words.has(term))
 }
+
+const aiFallbackHanSegments = value => String(value || '').normalize('NFKC')
+    .replace(/\d+\s*日/gu, ' ')
+    .replace(/[一二三四五六七八九十百千万]+\s*日/gu, ' ')
+    .replace(/[与和及并、，。：:；;|/\\]+/gu, ' ')
+    .match(/[\p{Script=Han}]{2,}/gu) || []
+
+const aiFallbackHanTerms = bookmark => {
+    const source = [bookmark.title, bookmark.description, bookmark.note].join(' ')
+    const ignored = new Set(['内容', '相关', '文章', '页面', '资料', '信息', '收藏', '最新', '一个', '家常'])
+    const suffixes = ['攻略', '路线', '做法', '家常', '指南', '教程', '推荐', '大全', '合集']
+    const terms = []
+    const add = value => {
+        const term = String(value || '').trim()
+        if (!aiTagAllowed(term, bookmark.title) || ignored.has(term) || terms.includes(term)) return
+        terms.push(term)
+    }
+
+    for (const segment of aiFallbackHanSegments(source)) {
+        let value = segment
+        for (const suffix of suffixes)
+            if (value.endsWith(suffix) && value.length > suffix.length) value = value.slice(0, -suffix.length)
+        add(value)
+        for (const phrase of ['自由行', '旅行', '旅游', '美食', '菜谱', '食谱', '料理', '烹饪'])
+            if (segment.includes(phrase)) add(phrase)
+    }
+    return terms
+}
+
+const aiFallbackNewTags = (bookmark, currentTags, existingTags) => {
+    const ignored = new Set(['and', 'for', 'from', 'with', 'this', 'that', 'the', 'www', 'http', 'https', 'com', 'org', 'net', 'test', 'docs', 'library', 'issues', 'guide', 'page', 'example'])
+    const host = String(bookmark.url || '').replace(/^https?:\/\//i, '').split(/[/?#]/)[0].replace(/[._-]+/g, ' ')
+    const text = [bookmark.title, host].join(' ')
+    const values = text.match(/[A-Za-z][A-Za-z0-9+#.-]{2,}/g) || []
+    return [...new Map(values.map(value => [value.toLowerCase(), value])).values()]
+        .filter(tag => !ignored.has(tag.toLowerCase()) && !currentTags.has(tag.toLowerCase()) && !existingTags.has(tag.toLowerCase()))
+        .slice(0, 5)
+}
+
+const aiFallbackNewCollections = (bookmark, candidates, terms) => {
+    const source = [bookmark.title, bookmark.description, bookmark.note].join(' ').normalize('NFKC')
+    const existing = candidates.collections.map(item => aiCollectionTitleKey(item.title))
+    const category = aiCollectionCategoryFor(bookmark)
+    const parent = candidates.collections.find(item => item.path?.length === 1 && aiCollectionTitleKey(item.title) === aiCollectionTitleKey(category))
+    const titles = []
+    const add = title => {
+        const value = String(title || '').trim()
+        const key = aiCollectionTitleKey(value)
+        if (!aiCollectionTitleAllowed(value) || !key || existing.includes(key) || titles.includes(value)) return
+        titles.push(value)
+    }
+    const place = terms.find(term => term.length === 2 && !/自由行|旅行|旅游|美食|菜谱|食谱|料理|烹饪/u.test(term))
+    if (/旅行|旅游|自由行|景点|攻略|路线/u.test(source)) add((place || '') + '旅行')
+    if (/菜谱|食谱|做法|料理|烹饪/u.test(source)) {
+        const dish = terms.find(term => term.length >= 3 && !/自由行|旅行|旅游|美食|菜谱|食谱|料理|烹饪/u.test(term))
+        add((dish || '美食') + '菜谱')
+    }
+    return titles.slice(0, 1).map((title, index) => ({
+        title,
+        kind: 'new',
+        category,
+        ...(parent ? { parentId: parent.id } : {}),
+        confidence: Math.max(0.5, 0.65 - index * 0.05),
+        confidenceTier: aiConfidenceTier(Math.max(0.5, 0.65 - index * 0.05))
+    }))
+}
+
+const aiFallbackSuggestions = (candidates, bookmark) => {
+    if (!aiSuggestionHasSignal(bookmark)) return {
+        collections: [],
+        tags: [],
+        newTags: [],
+        newCollections: [],
+        newCollectionDetails: [],
+        collectionRecommendations: [],
+        collectionCategories: aiCollectionTopLevels
+    }
+    const haystack = [bookmark.title, bookmark.description, bookmark.url].join(' ').normalize('NFKC').toLowerCase()
+    const collections = candidates.collections
+        .filter(item => item.title.toLowerCase().split(/\s+/).some(term => term.length > 2 && haystack.includes(term)))
+        .slice(0, 5)
+        .map((item, index) => {
+            const confidence = Math.max(0.55, 0.85 - index * 0.1)
+            return { ...item, confidence, confidenceTier: aiConfidenceTier(confidence), kind: 'existing' }
+        })
+    const currentTags = new Set((bookmark.tags || []).map(tag => String(tag).normalize('NFKC').toLowerCase()))
+    const existingTags = new Set(candidates.tags.map(tag => String(tag).normalize('NFKC').toLowerCase()))
+    const tags = candidates.tags.filter(tag => !currentTags.has(tag.toLowerCase()) && aiTagAllowed(tag, bookmark.title) && aiFallbackTagMatches(tag, haystack)).slice(0, 5)
+    const hanTerms = aiFallbackHanTerms(bookmark)
+    const newTags = [...hanTerms, ...aiFallbackNewTags(bookmark, currentTags, existingTags)]
+        .filter(tag => aiTagAllowed(tag, bookmark.title) && !currentTags.has(tag.toLowerCase()) && !existingTags.has(tag.toLowerCase()))
+        .slice(0, Math.max(0, 5 - tags.length))
+    const newCollectionDetails = aiFallbackNewCollections(bookmark, candidates, hanTerms)
+    const newCollections = newCollectionDetails.map(item => item.title)
+    return {
+        collections,
+        tags,
+        newTags,
+        newCollections,
+        newCollectionDetails,
+        collectionRecommendations: [...collections, ...newCollectionDetails],
+        collectionCategories: aiCollectionTopLevels
+    }
+}
+
+const aiSuggestionHasResults = suggestions => Boolean(
+    suggestions.collections.length ||
+    suggestions.tags.length ||
+    suggestions.newTags.length ||
+    suggestions.newCollectionDetails.length
+)
 
 const aiCollectText = async result => {
     let text = ''
@@ -3409,32 +3730,81 @@ const aiSuggestions = async (request, env, userId, { legacy = false, bookmarkId 
         return error('validation_failed', 400, request, env, 'Choose Workers AI or Custom AI Provider')
     const customProvider = providerName === 'custom' ? await selectAiProvider(env, userId) : null
     if (providerName === 'custom' && !customProvider)
-        return error('ai_provider_not_configured', 409, request, env, 'Configure and test a Custom AI Provider before using it')
+        return aiProviderError(request, env, providerName, 'ai_provider_not_configured', 'Configure and test a Custom AI Provider before using it', 409)
     let output = ''
+    let providerAttempted = false
     if (providerName === 'custom' || env.AI?.run) {
+        providerAttempted = true
         try {
             const result = await runAiProvider(env, providerName, [
-                { role: 'system', content: `Return JSON only in ${language}. Use only the supplied authorized Bookmark and candidate IDs/tags.` },
+                { role: 'system', content: `Return JSON only in ${language}. Use only the supplied authorized Bookmark and candidate IDs/tags. Organize Collections under one of the supplied top-level categories: ${aiCollectionTopLevels.join(', ')}. Prefer an existing Collection and return at most five ranked candidates. If no supplied Collection fits, suggest at most one concise new child Collection in new_collections, with category and parentId when a matching top-level candidate exists. Do not invent a new top-level category, timestamp, random ID, full sentence, or duplicate title. Return at most five total tag suggestions; tags are short topic, place, or technology terms rather than descriptions. Each Collection may include confidence (0-1) and a short reason.` },
                 { role: 'user', content: JSON.stringify({ task: 'suggest_collection_and_tags', bookmark: context.items?.[0] || bookmark, candidates }) }
-            ], {}, customProvider)
+            ], providerName === 'custom' ? {} : { stream: false, response_format: { type: 'json_object' } }, customProvider)
             output = await aiCollectText(result)
-        } catch {
-            if (!legacy) return error('ai_provider_unavailable', 503, request, env,
-                providerName === 'custom' ? 'Custom AI Provider is temporarily unavailable. Choose another provider.' : 'Workers AI is temporarily unavailable. Retry the request.')
+        } catch (failure) {
+            return aiProviderError(request, env, providerName, failure?.providerCode || 'ai_provider_unavailable',
+                providerName === 'custom' ? 'Custom AI Provider failed. Choose Retry Custom or Use Workers AI.' : 'Workers AI is temporarily unavailable. Retry the request.')
         }
     } else if (!legacy) {
-        return error('ai_provider_unavailable', 503, request, env, 'Workers AI is temporarily unavailable. Retry the request.')
+        return aiProviderError(request, env, providerName, 'ai_provider_unavailable', 'Workers AI is temporarily unavailable. Retry the request.')
     }
-    const suggestions = output ? aiSuggestionResult(output, candidates, bookmark) : aiFallbackSuggestions(candidates, bookmark)
+    if (!output && (!legacy || providerAttempted))
+        return aiProviderError(request, env, providerName, 'ai_provider_empty_response',
+            providerName === 'custom' ? 'Custom AI Provider returned an empty suggestions response.' : 'Workers AI returned an empty suggestions response.')
+    if (output && !aiJson(output))
+        return aiProviderError(request, env, providerName, 'ai_provider_invalid_response',
+            providerName === 'custom' ? 'Custom AI Provider returned an invalid suggestions response.' : 'Workers AI returned an invalid suggestions response.', 502)
+    let suggestionSource = output ? 'model' : 'fallback'
+    let suggestions = output ? aiSuggestionResult(output, candidates, bookmark) : aiFallbackSuggestions(candidates, bookmark)
+    if (output) {
+        const parsedOutput = aiJson(output) || {}
+        const fallback = aiFallbackSuggestions(candidates, bookmark)
+        const hasModelCollections = suggestions.collections.length || suggestions.newCollectionDetails.length
+        const hasModelTags = suggestions.tags.length || suggestions.newTags.length
+        const hasCollectionField = ['collections', 'new_collections', 'newCollections'].some(key => Object.hasOwn(parsedOutput, key))
+        const hasTagField = ['tags', 'new_tags', 'newTags'].some(key => Object.hasOwn(parsedOutput, key))
+        const explicitNoMatch = parsedOutput.suggestion_status === 'no_match' || parsedOutput.suggestionStatus === 'no_match' || parsedOutput.status === 'no_match' || parsedOutput.no_match === true
+        const missingCollections = !hasModelCollections && !hasCollectionField
+        const missingTags = !hasModelTags && !hasTagField
+        if (!explicitNoMatch && (missingCollections || missingTags)) {
+            suggestions = {
+                collections: missingCollections ? fallback.collections : suggestions.collections,
+                tags: missingTags ? fallback.tags : suggestions.tags,
+                newTags: missingTags ? fallback.newTags : suggestions.newTags,
+                newCollections: missingCollections ? fallback.newCollections : suggestions.newCollections,
+                newCollectionDetails: missingCollections ? fallback.newCollectionDetails : suggestions.newCollectionDetails,
+                collectionRecommendations: missingCollections ? fallback.collectionRecommendations : suggestions.collectionRecommendations,
+                collectionCategories: aiCollectionTopLevels
+            }
+            suggestionSource = 'fallback'
+        }
+    }
+    const suggestionStatus = aiSuggestionHasResults(suggestions)
+        ? suggestionSource === 'fallback' ? 'fallback' : 'suggestions'
+        : 'no_match'
     const item = {
-        collections: suggestions.collections.map(collection => ({ $id: collection.id })),
+        collections: suggestions.collections.map(collection => ({
+            $id: collection.id,
+            title: collection.title,
+            confidence: collection.confidence,
+            confidenceTier: collection.confidenceTier,
+            ...(collection.reason ? { reason: collection.reason } : {})
+        })),
         tags: suggestions.tags,
-        new_tags: suggestions.newTags
+        new_tags: suggestions.newTags,
+        new_collections: suggestions.newCollections,
+        new_collection_details: suggestions.newCollectionDetails,
+        collection_recommendations: suggestions.collectionRecommendations,
+        collection_categories: aiCollectionTopLevels,
+        suggestion_status: suggestionStatus,
+        suggestion_source: suggestionSource
     }
     return json({
         result: true,
         language,
         suggestions,
+        suggestionStatus,
+        suggestionSource,
         ...(legacy ? { item } : {}),
         sources: context.sources || []
     }, 200, request, env)
@@ -3443,28 +3813,52 @@ const aiSuggestions = async (request, env, userId, { legacy = false, bookmarkId 
 const aiDescriptionDraft = async (request, env, userId) => {
     const { data: rawData } = await readBody(request)
     const data = rawData && typeof rawData === 'object' ? rawData : {}
-    const value = data.raindropId
-    const context = await aiBookmarkContext(env, userId, value)
-    if (context.error || !context.items.length) return error('bookmark_not_found', 404, request, env, 'Bookmark was not found')
+    const value = data.raindropId ?? data.bookmarkId
+    let context
+    if (value !== undefined && value !== null && value !== '') {
+        context = await aiBookmarkContext(env, userId, value)
+        if (context.error || !context.items.length) return error('bookmark_not_found', 404, request, env, 'Bookmark was not found')
+    } else {
+        const link = String(data.link || data.url || '').trim()
+        const title = String(data.title || '').trim()
+        if (!link || !title) return error('validation_failed', 400, request, env, 'Provide a Bookmark URL and title')
+        const bookmark = {
+            id: 0,
+            title,
+            url: link,
+            description: String(data.description || data.excerpt || ''),
+            note: String(data.note || ''),
+            highlights: [],
+            tags: Array.isArray(data.tags) ? data.tags : []
+        }
+        const contextText = aiContextText([bookmark], Number(env.AI_CONTEXT_MAX_CHARS) || 12000)
+        context = { ...contextText, sources: [] }
+    }
     const providerName = String(data.provider || 'workers_ai').trim().toLowerCase()
     if (!['workers_ai', 'custom'].includes(providerName))
         return error('validation_failed', 400, request, env, 'Choose Workers AI or Custom AI Provider')
     const customProvider = providerName === 'custom' ? await selectAiProvider(env, userId) : null
     if (providerName === 'custom' && !customProvider)
-        return error('ai_provider_not_configured', 409, request, env, 'Configure and test a Custom AI Provider before using it')
+        return aiProviderError(request, env, providerName, 'ai_provider_not_configured', 'Configure and test a Custom AI Provider before using it', 409)
     if (providerName === 'workers_ai' && !env.AI?.run)
-        return error('ai_provider_unavailable', 503, request, env, 'Workers AI is temporarily unavailable. Retry the request.')
+        return aiProviderError(request, env, providerName, 'ai_provider_unavailable', 'Workers AI is temporarily unavailable. Retry the request.')
     const language = aiLanguage(data.language || data.lang, request)
+    const field = String(data.field || 'description').toLowerCase() === 'note' ? 'note' : 'description'
+    const fieldLabel = field === 'note' ? 'note' : 'description'
+    const thinking = field === 'note' && data.thinking === true
+    const instruction = field === 'note'
+        ? `Write a Bookmark note in ${language}. ${aiNotePrompt(data.notePrompt)}${thinking ? ' Think carefully in private before writing the note, but never return your reasoning.' : ''} Return only the proposed note text. Do not change any Bookmark.`
+        : `Write one concise Bookmark ${fieldLabel} in ${language}. Return only the proposed ${fieldLabel} text. Do not change any Bookmark.`
     try {
         const result = await runAiProvider(env, providerName, [
-            { role: 'system', content: `Write one concise Bookmark description in ${language}. Return only the proposed description text. Do not change any Bookmark.` },
+            { role: 'system', content: instruction },
             { role: 'user', content: context.text }
-        ], {}, customProvider)
+        ], thinking ? { thinking: true } : {}, customProvider)
         const draft = (await aiCollectText(result)).slice(0, 10000).trim()
-        if (!draft) return error('ai_provider_unavailable', 503, request, env, providerName === 'custom' ? 'Custom AI Provider returned an empty description' : 'Workers AI returned an empty description')
-        return json({ result: true, language, draft, sources: context.sources }, 200, request, env)
-    } catch {
-        return error('ai_provider_unavailable', 503, request, env,
+        if (!draft) return aiProviderError(request, env, providerName, 'ai_provider_empty_response', providerName === 'custom' ? `Custom AI Provider returned an empty ${fieldLabel}` : `Workers AI returned an empty ${fieldLabel}`)
+        return json({ result: true, language, field, draft, sources: context.sources }, 200, request, env)
+    } catch (failure) {
+        return aiProviderError(request, env, providerName, failure?.providerCode || 'ai_provider_unavailable',
             providerName === 'custom' ? 'Custom AI Provider is temporarily unavailable. Choose another provider.' : 'Workers AI is temporarily unavailable. Retry the request.')
     }
 }
@@ -4060,6 +4454,7 @@ const aiMessageText = value => {
     if (value === null || value === undefined) return ''
     if (typeof value === 'string' || typeof value === 'number') return String(value)
     if (typeof value !== 'object') return ''
+    if (value.response && typeof value.response === 'object') return JSON.stringify(value.response)
     const choice = value.choices?.[0]
     return aiMessageText(value.response ?? value.delta ?? value.text ?? value.token ?? value.content
         ?? choice?.delta?.content ?? choice?.message?.content ?? '')
@@ -4120,8 +4515,14 @@ async function* aiResultChunks(result) {
 
 const runWorkersAi = async (env, messages, options = {}) => {
     if (!env.AI || typeof env.AI.run !== 'function') throw new Error('Workers AI binding is unavailable')
-    const { tools, ...rest } = options
-    const result = await env.AI.run(aiModel(env), { messages, stream: true, ...rest, ...(tools?.length ? { tools } : {}) })
+    const { tools, thinking, ...rest } = options
+    const result = await env.AI.run(aiModel(env), {
+        messages,
+        stream: true,
+        ...rest,
+        ...(thinking ? { chat_template_kwargs: { enable_thinking: true } } : {}),
+        ...(tools?.length ? { tools } : {})
+    })
     if (!result || result.ok === false || result.error || result.errors?.length) throw new Error('Workers AI provider failed')
     return result
 }
@@ -4136,7 +4537,7 @@ const runCustomAi = async (env, provider, messages, options = {}) => {
         throw aiProviderFailure('ai_provider_unavailable', 'Custom AI Provider is not configured')
     const payload = {
         model: String(provider.model || ''),
-        ...customAiMessages(messages, options.tools),
+        ...customAiMessages(messages, options.tools, options.thinking),
         stream: true
     }
     const response = await aiProviderFetch(env, endpoint.url, {
@@ -6860,6 +7261,20 @@ export default {
                     await env.DB.prepare('DELETE FROM collections WHERE user_id = ? AND id = ? AND removed_at IS NULL').bind(session.user_id, id).run()
                 }
                 return json({ result: true, count: ids.length }, 200, request, env)
+            }
+
+            if (url.pathname === '/v1/raindrops/links' && request.method === 'GET') {
+                const rows = await env.DB.prepare('SELECT id, url FROM bookmarks WHERE user_id = ? AND removed_at IS NULL ORDER BY id')
+                    .bind(session.user_id).all()
+                const body = (rows.results || [])
+                    .map(item => `${item.id}</-rl-/>${encodeURIComponent(item.url || '')}`)
+                    .join('\n')
+                const headers = addCorsHeaders(new Headers({
+                    'Content-Type': 'text/plain; charset=utf-8',
+                    'Cache-Control': 'private, no-store',
+                    'X-Request-ID': requestId(request)
+                }), request, env)
+                return new Response(body, { status: 200, headers })
             }
 
             const listMatch = url.pathname.match(/^\/v1\/raindrops\/(-?\d+)$/)

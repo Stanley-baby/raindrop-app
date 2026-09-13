@@ -289,7 +289,7 @@ test('AI grounds natural-language prompts in authorized bookmark search results'
         user_id: 1,
         url: 'https://developers.cloudflare.com/workers-ai/',
         title: 'Cloudflare Workers AI',
-        description: 'AI documentation',
+        description: 'AI engineering documentation',
         note: '',
         highlights: '[]',
         tags: '["cloudflare"]'
@@ -360,6 +360,32 @@ test('Custom AI Provider validates public HTTPS endpoints and keeps probes metad
         assert.match(stream, /Custom hello/)
         assert.equal(calls[1].body.model, 'custom-model')
         assert.ok(calls[1].body.tools.every(item => item.type === 'function'))
+
+        const note = await worker.fetch(request('/v2/ai/description-draft', {
+            method: 'POST',
+            body: JSON.stringify({
+                provider: 'custom',
+                link: 'https://example.test/note',
+                title: 'Custom note',
+                field: 'note',
+                thinking: true
+            })
+        }), env)
+        assert.equal(note.status, 200)
+        assert.equal(calls[2].body.reasoning_effort, 'medium')
+
+        globalThis.fetch = async () => new Response('data: {"choices":[{"delta":{"content":"not valid JSON"}}]}\n\n', {
+            headers: { 'Content-Type': 'text/event-stream' }
+        })
+        const malformedSuggestions = await worker.fetch(request('/v2/ai/suggestions', {
+            method: 'POST',
+            body: JSON.stringify({ provider: 'custom', link: 'https://example.test/malformed', title: 'Malformed suggestions' })
+        }), env)
+        assert.equal(malformedSuggestions.status, 502)
+        const malformedBody = await malformedSuggestions.json()
+        assert.equal(malformedBody.error, 'ai_provider_invalid_response')
+        assert.equal(malformedBody.provider, 'custom')
+        assert.deepEqual(malformedBody.fallbackProviders, ['workers_ai'])
 
         globalThis.fetch = async () => { throw new Error('provider down') }
         const failed = await worker.fetch(request('/v2/ai/chat', {
@@ -440,7 +466,7 @@ test('AI suggestions stay authorized, language-aware, and metadata-only', async 
         user_id: 1,
         url: 'https://developers.cloudflare.com/workers-ai/',
         title: 'Cloudflare Workers AI',
-        description: 'AI documentation',
+        description: 'AI engineering documentation',
         note: 'Keep this note',
         highlights: '[]',
         tags: '["existing"]'
@@ -450,7 +476,7 @@ test('AI suggestions stay authorized, language-aware, and metadata-only', async 
     db.collections.push({ id: 4, user_id: 2, title: 'Other user collection', parent_id: null })
     env.AI.run = async (...args) => {
         calls.push(args)
-        return new Response('data: {"response":"{\\"collections\\":[{\\"$id\\":3}],\\"tags\\":[\\"cloudflare\\"],\\"new_tags\\":[\\"workers\\"]}"}\n\n', {
+        return new Response('data: {"response":"{\\"collections\\":[{\\"$id\\":3}],\\"tags\\":[\\"cloudflare\\"],\\"new_tags\\":[\\"workers\\"],\\"new_collections\\":[\\"AI Projects\\"]}"}\n\n', {
             headers: { 'Content-Type': 'text/event-stream' }
         })
     }
@@ -464,13 +490,450 @@ test('AI suggestions stay authorized, language-aware, and metadata-only', async 
     assert.deepEqual(body.suggestions.collections.map(item => item.id), [3])
     assert.deepEqual(body.suggestions.tags, ['cloudflare'])
     assert.deepEqual(body.suggestions.newTags, ['workers'])
+    assert.deepEqual(body.suggestions.newCollections, ['AI Projects'])
     assert.equal(Object.hasOwn(body, 'item'), false)
     assert.equal(body.language, 'zh-Hans')
+    assert.equal(calls[0][1].stream, false)
+    assert.deepEqual(calls[0][1].response_format, { type: 'json_object' })
     assert.match(calls[0][1].messages[0].content, /zh-Hans/)
     assert.match(calls[0][1].messages.at(-1).content, /Cloudflare Workers AI/)
     assert.match(calls[0][1].messages.at(-1).content, /"tags":\["existing"\]/)
     assert.doesNotMatch(calls[0][1].messages.at(-1).content, /Other user collection/)
     assert.doesNotMatch(calls[0][1].messages.at(-1).content, /attachment-body|snapshot-body/)
+})
+
+test('AI collection suggestions keep ranked confidence, multiple candidates, and clean new titles', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 7,
+        user_id: 1,
+        url: 'https://example.test/ai',
+        title: 'AI bookmark',
+        description: 'Engineering research notes',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    db.collections.push({ id: 3, user_id: 1, title: 'Engineering', parent_id: null })
+    db.collections.push({ id: 5, user_id: 1, title: 'AI Projects', parent_id: null })
+    db.collections.push({ id: 4, user_id: 2, title: 'Other user collection', parent_id: null })
+    env.AI.run = async () => new Response('data: {"response":"{\\"collections\\":[{\\"id\\":3,\\"confidence\\":0.92,\\"reason\\":\\"Matches the bookmark topic.\\"},{\\"id\\":3,\\"confidence\\":0.4},{\\"id\\":4,\\"confidence\\":0.99}],\\"new_collections\\":[{\\"title\\":\\"AI Projects\\",\\"confidence\\":0.9},{\\"title\\":\\"AI Project\\",\\"confidence\\":0.8},{\\"title\\":\\"Research\\",\\"confidence\\":\\"medium\\"},{\\"title\\":\\"Test collection\\",\\"confidence\\":0.9}]}"}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 7 })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.suggestions.collections.map(item => item.id), [3])
+    assert.equal(body.suggestions.collections[0].confidence, 0.92)
+    assert.equal(body.suggestions.collections[0].confidenceTier, 'high')
+    assert.deepEqual(body.suggestions.newCollections, ['Research'])
+    assert.equal(body.suggestions.newCollectionDetails[0].confidenceTier, 'medium')
+    assert.deepEqual(body.suggestions.collectionRecommendations.map(item => item.kind), ['existing', 'new'])
+    assert.equal(body.suggestions.collectionRecommendations[1].title, 'Research')
+})
+
+test('AI collection suggestions use stable top-level categories and one nested child', async () => {
+    const { env, db, calls } = await environment()
+    db.bookmarks.push({
+        id: 23,
+        user_id: 1,
+        url: 'https://example.test/tokyo',
+        title: '东京自由行',
+        description: '日本浅草和镰仓行程',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    db.collections.push({ id: 30, user_id: 1, title: '旅行与地点', parent_id: null })
+    env.AI.run = async (...args) => {
+        calls.push(args)
+        return new Response('data: {"response":"{\\"new_collections\\":[{\\"title\\":\\"日本\\",\\"category\\":\\"旅行与地点\\",\\"parentId\\":30},{\\"title\\":\\"东京攻略\\",\\"category\\":\\"旅行与地点\\"}],\\"new_tags\\":[\\"浅草\\"]}"}\n\n', {
+            headers: { 'Content-Type': 'text/event-stream' }
+        })
+    }
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 23, language: 'zh-Hans' })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.suggestions.newCollections, ['日本'])
+    assert.equal(body.suggestions.newCollectionDetails[0].category, '旅行与地点')
+    assert.equal(body.suggestions.newCollectionDetails[0].parentId, 30)
+    assert.deepEqual(body.suggestions.collectionCategories, [
+        '技术与开发', '工作与项目', '学习与研究', '生活与实用',
+        '旅行与地点', '内容与阅读', '媒体与娱乐', '待整理'
+    ])
+    assert.match(calls[0][1].messages[0].content, /旅行与地点/)
+    assert.match(calls[0][1].messages[0].content, /at most one concise new child Collection/)
+})
+
+test('AI suggestions accept a structured Workers AI response object', async () => {
+    const { env } = await environment()
+    env.AI.run = async () => ({ response: { collections: [], tags: [], new_tags: ['structured'], new_collections: [] } })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ link: 'https://example.test/structured', title: 'Structured response' })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.suggestions.newTags, ['structured'])
+    assert.equal(body.suggestionStatus, 'suggestions')
+})
+
+test('AI suggestions reject malformed provider output with explicit recovery metadata', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 9,
+        user_id: 1,
+        url: 'https://example.test/ai',
+        title: 'AI bookmark',
+        description: 'Research notes',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    db.collections.push({ id: 3, user_id: 1, title: 'AI Research', parent_id: null })
+    env.AI.run = async () => new Response('data: {"response":"not valid JSON"}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 9 })
+    }), env)
+    assert.equal(response.status, 502)
+    const body = await response.json()
+    assert.equal(body.error, 'ai_provider_invalid_response')
+    assert.equal(body.provider, 'workers_ai')
+    assert.deepEqual(body.fallbackProviders, [])
+
+    const legacy = await worker.fetch(request('/v1/raindrop/9/suggest'), env)
+    assert.equal(legacy.status, 502)
+    const legacyBody = await legacy.json()
+    assert.equal(legacyBody.error, 'ai_provider_invalid_response')
+    assert.equal(legacyBody.provider, 'workers_ai')
+})
+
+test('AI suggestion and Description Draft provider failures expose recovery metadata', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 21,
+        user_id: 1,
+        url: 'https://example.test/provider-failure',
+        title: 'Provider failure bookmark',
+        description: 'A bookmark used to verify provider recovery.',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    env.AI.run = async () => { throw new Error('provider down') }
+
+    const suggestions = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 21 })
+    }), env)
+    assert.equal(suggestions.status, 503)
+    const suggestionBody = await suggestions.json()
+    assert.equal(suggestionBody.error, 'ai_provider_unavailable')
+    assert.equal(suggestionBody.provider, 'workers_ai')
+    assert.deepEqual(suggestionBody.fallbackProviders, [])
+
+    const draft = await worker.fetch(request('/v2/ai/description-draft', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 21, language: 'zh-Hans' })
+    }), env)
+    assert.equal(draft.status, 503)
+    const draftBody = await draft.json()
+    assert.equal(draftBody.error, 'ai_provider_unavailable')
+    assert.equal(draftBody.provider, 'workers_ai')
+    assert.deepEqual(draftBody.fallbackProviders, [])
+})
+
+test('AI fallback suggestions only keep content-matched tags and short useful tokens', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 11,
+        user_id: 1,
+        url: 'https://example.test/python',
+        title: 'Python reference',
+        description: '',
+        note: '',
+        highlights: '[]',
+        tags: '["python","iptv","ai-验证"]'
+    })
+    db.bookmarks.push({
+        id: 12,
+        user_id: 1,
+        url: 'https://docs.python.org/3/library/asyncio.html',
+        title: 'asyncio — Asynchronous I/O',
+        description: 'Python async and await APIs for concurrent code.',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    env.AI.run = async () => new Response('data: {"response":"{}"}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 12 })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.suggestions.tags, ['python'])
+    assert.ok(body.suggestions.newTags.includes('asyncio'))
+    assert.ok(!body.suggestions.newTags.includes('asyncio — Asynchronous I/O'))
+    assert.ok(!body.suggestions.tags.includes('iptv'))
+    assert.ok(!body.suggestions.tags.includes('ai-验证'))
+})
+
+test('AI fallback suggestions derive concise CJK collection and tags from a descriptive title', async () => {
+    const { env, db } = await environment()
+    const title = '东京五日自由行攻略：浅草、涩谷、镰仓与美食路线'
+    db.bookmarks.push({
+        id: 18,
+        user_id: 1,
+        url: 'https://example.test/tokyo-5-day-itinerary',
+        title,
+        description: '',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    env.AI.run = async () => new Response('data: {"response":"{}"}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 18, language: 'zh-Hans' })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.suggestionStatus, 'fallback')
+    assert.ok(body.suggestions.newCollections.some(title => /东京|旅行/.test(title)))
+    assert.ok(body.suggestions.newTags.some(tag => ['东京', '自由行', '浅草', '涩谷', '镰仓'].includes(tag)))
+})
+
+test('AI fallback suggestions preserve useful CJK recipe terms', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 19,
+        user_id: 1,
+        url: 'https://example.test/sichuan-kung-pao-chicken',
+        title: '宫保鸡丁家常做法',
+        description: '',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    env.AI.run = async () => new Response('data: {"response":"{}"}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 19, language: 'zh-Hans' })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.suggestionStatus, 'fallback')
+    assert.ok(body.suggestions.newCollections.some(title => title.includes('菜谱')))
+    assert.ok(body.suggestions.newTags.includes('宫保鸡丁'))
+})
+
+test('AI suggestions fill a missing tag field when the model only returns a collection', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 20,
+        user_id: 1,
+        url: 'https://example.test/sichuan-kung-pao-chicken',
+        title: '宫保鸡丁家常做法',
+        description: '川菜宫保鸡丁食谱：鸡胸肉、花生、干辣椒和花椒。',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    env.AI.run = async () => new Response('data: {"response":"{\\"new_collections\\":[{\\"title\\":\\"川菜食谱\\"}]}"}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 20, language: 'zh-Hans' })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.ok(body.suggestions.newCollections.includes('川菜食谱'))
+    assert.ok(body.suggestions.newTags.includes('宫保鸡丁'))
+})
+
+test('AI suggestions reject a full bookmark title as a model tag', async () => {
+    const { env, db } = await environment()
+    const title = '东京五日自由行攻略：浅草、涩谷、镰仓与美食路线'
+    db.bookmarks.push({ id: 13, user_id: 1, url: 'https://example.test/tokyo', title, description: 'Japan travel itinerary', note: '', highlights: '[]', tags: '[]' })
+    env.AI.run = async () => new Response(`data: {"response":${JSON.stringify(JSON.stringify({ new_tags: [title, '日本旅行'] }))}}\n\n`, {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 13 })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.suggestions.newTags, ['日本旅行'])
+})
+
+test('AI suggestions reject descriptive tags and keep five total suggestions', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({ id: 24, user_id: 1, url: 'https://example.test/tags', title: '旅行标签', description: '旅行地点', note: '', highlights: '[]', tags: '[]' })
+    db.bookmarks.push({ id: 25, user_id: 1, url: 'https://example.test/tags-2', title: '已有标签', description: '', note: '', highlights: '[]', tags: '["旅行"]' })
+    env.AI.run = async () => new Response('data: {"response":"{\\"tags\\":[\\"旅行\\",\\"地点\\",\\"路线\\",\\"攻略\\"],\\"new_tags\\":[\\"浅草\\",\\"浅草\\",\\"涩谷\\",\\"镰仓\\",\\"面向第一次去日本的游客\\",\\"第一次去日本的游客必看路线\\",\\"这是一段描述。\\"]}"}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 24, language: 'zh-Hans' })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    const allTags = [...body.suggestions.tags, ...body.suggestions.newTags]
+    assert.ok(allTags.length <= 5)
+    assert.equal(new Set(allTags.map(tag => tag.toLowerCase())).size, allTags.length)
+    assert.ok(!allTags.includes('面向第一次去日本的游客'))
+    assert.ok(!allTags.includes('第一次去日本的游客必看路线'))
+    assert.ok(!allTags.includes('这是一段描述。'))
+})
+
+test('AI suggestions preserve concise domain tags containing common description words', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 29,
+        user_id: 1,
+        url: 'https://example.test/ux-research',
+        title: '用户体验研究',
+        description: '用户研究方法、使用说明与服务提供商案例。如何使用该工具，为什么值得阅读。',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    env.AI.run = async () => new Response(`data: ${JSON.stringify({ response: JSON.stringify({ new_tags: ['用户体验', '用户研究', '使用说明', '面向用户提供帮助', '这是使用说明', '如何使用该工具', '为什么值得阅读'] }) })}\n\n`, {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 29, language: 'zh-Hans' })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.suggestions.newTags, ['用户体验', '用户研究', '使用说明'])
+    assert.ok(!body.suggestions.newTags.includes('面向用户提供帮助'))
+    assert.ok(!body.suggestions.newTags.includes('这是使用说明'))
+    assert.ok(!body.suggestions.newTags.includes('如何使用该工具'))
+    assert.ok(!body.suggestions.newTags.includes('为什么值得阅读'))
+})
+
+test('AI suggestions use token boundaries for short Latin candidates', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push(
+        { id: 30, user_id: 1, url: 'https://example.test/raindrop-guide', title: 'Raindrop guide', description: '', note: '', highlights: '[]', tags: '[]' },
+        { id: 31, user_id: 1, url: 'https://example.test/ai-guide', title: 'AI guide', description: '', note: '', highlights: '[]', tags: '[]' }
+    )
+    db.collections.push({ id: 5, user_id: 1, title: 'AI', parent_id: null })
+    env.AI.run = async () => new Response(`data: ${JSON.stringify({ response: JSON.stringify({ collections: [{ id: 5, confidence: 0.9, reason: '推荐' }], new_tags: ['AI'] }) })}\n\n`, {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const unrelated = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 30, language: 'en' })
+    }), env)
+    assert.equal(unrelated.status, 200)
+    const unrelatedBody = await unrelated.json()
+    assert.equal(unrelatedBody.suggestionStatus, 'no_match')
+    assert.deepEqual(unrelatedBody.suggestions.collections, [])
+    assert.deepEqual(unrelatedBody.suggestions.newTags, [])
+
+    const related = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 31, language: 'en' })
+    }), env)
+    assert.equal(related.status, 200)
+    const relatedBody = await related.json()
+    assert.equal(relatedBody.suggestionStatus, 'suggestions')
+    assert.deepEqual(relatedBody.suggestions.collections.map(item => item.id), [5])
+    assert.deepEqual(relatedBody.suggestions.newTags, ['AI'])
+})
+
+test('AI suggestions expose an explicit no-match result', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 10,
+        user_id: 1,
+        url: 'https://example.test/unmatched',
+        title: 'Unmatched bookmark',
+        description: 'No candidate terms',
+        note: '',
+        highlights: '[]',
+        tags: '["unmatched","bookmark","no","candidate","terms"]'
+    })
+    db.collections.push({ id: 3, user_id: 1, title: 'Engineering', parent_id: null })
+    env.AI.run = async () => new Response('data: {"response":"{\\"collections\\":[{\\"id\\":999}]}"}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 10 })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.suggestionStatus, 'no_match')
+    assert.equal(body.suggestionSource, 'fallback')
+    assert.deepEqual(body.suggestions.collections, [])
+    assert.deepEqual(body.suggestions.tags, [])
+    assert.deepEqual(body.suggestions.newTags, [])
+})
+
+test('AI suggestions preserve an explicit model no-match without heuristic generation', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 22,
+        user_id: 1,
+        url: 'https://example.test/no-match',
+        title: 'Python reference',
+        description: 'A candidate collection exists but the model found no match.',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    db.collections.push({ id: 6, user_id: 1, title: 'Python', parent_id: null })
+    env.AI.run = async () => new Response('data: {"response":"{\\"status\\":\\"no_match\\",\\"collections\\":[],\\"tags\\":[],\\"new_tags\\":[],\\"new_collections\\":[]}"}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 22 })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.suggestionStatus, 'no_match')
+    assert.equal(body.suggestionSource, 'model')
+    assert.deepEqual(body.suggestions.collections, [])
+    assert.deepEqual(body.suggestions.tags, [])
+    assert.deepEqual(body.suggestions.newTags, [])
 })
 
 test('AI description draft is editable output and never writes the Bookmark', async () => {
@@ -499,6 +962,57 @@ test('AI description draft is editable output and never writes the Bookmark', as
     assert.equal(db.bookmarks[0].description, 'Original description')
 })
 
+test('AI note draft accepts edit-page metadata without writing the Bookmark', async () => {
+    const { env, calls } = await environment()
+    env.AI.run = async (...args) => {
+        calls.push(args)
+        return new Response('data: {"response":"A concise personal note."}\n\n', {
+            headers: { 'Content-Type': 'text/event-stream' }
+        })
+    }
+
+    const response = await worker.fetch(request('/v2/ai/description-draft', {
+        method: 'POST',
+        body: JSON.stringify({
+            link: 'https://example.test/new',
+            title: 'New bookmark',
+            description: 'A short summary',
+            field: 'note',
+            language: 'zh-Hans'
+        })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.field, 'note')
+    assert.equal(body.draft, 'A concise personal note.')
+    assert.match(calls[0][1].messages[0].content, /Bookmark note/)
+})
+
+test('AI note draft applies the saved prompt and enables model thinking', async () => {
+    const { env, calls } = await environment()
+    env.AI.run = async (...args) => {
+        calls.push(args)
+        return new Response('data: {"response":"Useful note."}\n\n', {
+            headers: { 'Content-Type': 'text/event-stream' }
+        })
+    }
+
+    const response = await worker.fetch(request('/v2/ai/description-draft', {
+        method: 'POST',
+        body: JSON.stringify({
+            link: 'https://example.test/new',
+            title: 'New bookmark',
+            field: 'note',
+            notePrompt: 'Explain why this bookmark matters to a future reader.',
+            thinking: true
+        })
+    }), env)
+
+    assert.equal(response.status, 200)
+    assert.match(calls[0][1].messages[0].content, /Explain why this bookmark matters to a future reader\./)
+    assert.deepEqual(calls[0][1].chat_template_kwargs, { enable_thinking: true })
+})
+
 test('AI context endpoint exposes only authorized Bookmark metadata', async () => {
     const { env, db } = await environment()
     db.bookmarks.push({
@@ -525,12 +1039,16 @@ test('AI context endpoint exposes only authorized Bookmark metadata', async () =
 test('legacy Bookmark suggestion endpoints return the client-compatible item shape', async () => {
     const { env, db } = await environment()
     db.bookmarks.push({ id: 7, user_id: 1, url: 'https://example.test/article', title: 'Article', description: '', note: '', highlights: '[]', tags: '[]' })
+    env.AI.run = async () => new Response('data: {"response":"{}"}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
     const response = await worker.fetch(request('/v1/raindrop/7/suggest'), env)
     assert.equal(response.status, 200)
     const body = await response.json()
     assert.ok(Array.isArray(body.item.collections))
     assert.ok(Array.isArray(body.item.tags))
     assert.ok(Array.isArray(body.item.new_tags))
+    assert.ok(Array.isArray(body.item.collection_recommendations))
 
     const created = await worker.fetch(request('/v1/raindrop/suggest', {
         method: 'POST',
@@ -719,4 +1237,130 @@ test('standing AI approval is scoped to one tool and Collection and can be revok
     }), env)
     assert.equal(afterRevoke.status, 201)
     assert.equal((await afterRevoke.json()).proposal.status, 'pending')
+})
+
+test('AI suggestions return no_match for low-information bookmarks with unrelated model candidates', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 24,
+        user_id: 1,
+        url: 'https://example.test/blank-bookmark',
+        title: '',
+        description: '',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    db.collections.push({ id: 4, user_id: 1, title: '直播源管理', parent_id: null })
+    const model = {
+        collections: [{ id: 4, confidence: 0.9, reason: '不相关' }],
+        tags: ['iptv', '东京'],
+        new_collections: [{ title: 'Chrome 浏览器扩展', category: '技术与开发', confidence: 0.7 }]
+    }
+    env.AI.run = async () => new Response(`data: ${JSON.stringify({ response: JSON.stringify(model) })}\n\n`, {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 24, language: 'zh-Hans' })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.suggestionStatus, 'no_match')
+    assert.deepEqual(body.suggestions.collections, [])
+    assert.deepEqual(body.suggestions.tags, [])
+    assert.deepEqual(body.suggestions.newTags, [])
+    assert.deepEqual(body.suggestions.newCollections, [])
+})
+
+test('AI suggestions drop model tags unrelated to the bookmark content', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 26,
+        user_id: 1,
+        url: 'https://docs.python.org/3/library/asyncio.html',
+        title: 'asyncio — Asynchronous I/O',
+        description: 'Python async and await APIs for concurrent code.',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    const model = { tags: ['iptv', 'ai-验证', 'python', 'async'] }
+    env.AI.run = async () => new Response(`data: ${JSON.stringify({ response: JSON.stringify(model) })}\n\n`, {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 26, language: 'zh-Hans' })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.suggestions.tags, [])
+    assert.deepEqual(body.suggestions.newTags, ['python', 'async'])
+})
+
+test('AI suggestions filter unrelated existing and low-confidence new collections', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 27,
+        user_id: 1,
+        url: 'https://docs.python.org/3/library/asyncio.html',
+        title: 'asyncio — Asynchronous I/O',
+        description: 'Python async and await APIs for concurrent code.',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    db.collections.push({ id: 4, user_id: 1, title: '直播源管理', parent_id: null })
+    const model = {
+        collections: [{ id: 4, confidence: 0.95, reason: '推荐' }],
+        new_collections: [
+            { title: '随机收藏', confidence: 0.9, reason: '推荐' },
+            { title: 'Python 并发', confidence: 0.4 },
+            { title: 'Python 并发编程', confidence: 0.8 }
+        ]
+    }
+    env.AI.run = async () => new Response(`data: ${JSON.stringify({ response: JSON.stringify(model) })}\n\n`, {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 27, language: 'zh-Hans' })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.suggestions.collections, [])
+    assert.deepEqual(body.suggestions.newCollections, ['Python 并发编程'])
+})
+
+test('AI suggestions return no_match for placeholder titles without metadata', async () => {
+    const { env, db } = await environment()
+    db.bookmarks.push({
+        id: 28,
+        user_id: 1,
+        url: 'https://example.test/placeholder',
+        title: 'Untitled page',
+        description: '',
+        note: '',
+        highlights: '[]',
+        tags: '[]'
+    })
+    env.AI.run = async () => new Response(`data: ${JSON.stringify({ response: JSON.stringify({ tags: ['iptv'], new_collections: ['IPTV'] }) })}\n\n`, {
+        headers: { 'Content-Type': 'text/event-stream' }
+    })
+
+    const response = await worker.fetch(request('/v2/ai/suggestions', {
+        method: 'POST',
+        body: JSON.stringify({ raindropId: 28, language: 'zh-Hans' })
+    }), env)
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.suggestionStatus, 'no_match')
+    assert.deepEqual(body.suggestions.collections, [])
+    assert.deepEqual(body.suggestions.tags, [])
+    assert.deepEqual(body.suggestions.newTags, [])
+    assert.deepEqual(body.suggestions.newCollections, [])
 })
