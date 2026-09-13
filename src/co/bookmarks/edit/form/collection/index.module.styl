@@ -1,0 +1,24 @@
+.field {
+    display: flex
+    align-items: center
+    gap: var(--padding-small)
+}
+
+.field > :first-child {
+    min-width: 0
+    flex: 1
+}
+
+.status,
+.error {
+    font-size: .85em
+    color: var(--disable-text-color)
+}
+
+.error {
+    display: flex
+    align-items: center
+    gap: var(--padding-small)
+    margin-top: var(--padding-small)
+    color: var(--danger-color)
+}

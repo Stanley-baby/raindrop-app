@@ -379,7 +379,7 @@ function* reorder({ _id, ignore, order, collectionId }) {
 	})
 }
 
-function* suggestFields({ obj, ignore }) {
+function* suggestFields({ obj, ignore, onSuccess, onFail, field='all', requestId }) {
 	if (ignore) return
 	if (!obj?.link && !obj?._id) return
 
@@ -389,18 +389,56 @@ function* suggestFields({ obj, ignore }) {
 		const pro = isPro(state)
 		if (!pro && !independentService) return
 
-		const { item } = obj._id ?
-			yield call(Api.get, `raindrop/${obj._id}/suggest`) :
-			yield call(Api.post, 'raindrop/suggest', obj)
+		const requestOptions = { retries: 0 }
+		const { item={} } = obj._id ?
+			yield call(Api.get, `raindrop/${obj._id}/suggest`, requestOptions) :
+			yield call(Api.post, 'raindrop/suggest', obj, requestOptions)
+		const collections = item.collections || []
+		const tags = item.tags || []
+		const newTags = item.new_tags || []
+		const newCollections = item.new_collections || item.newCollections || []
+		const collectionRecommendations = item.collection_recommendations || item.collectionRecommendations || []
+		const suggestionStatus = item.suggestion_status || item.suggestionStatus ||
+			(collections.length || tags.length || newTags.length || newCollections.length || collectionRecommendations.length ? 'suggestions' : 'no_match')
+		const suggestionSource = item.suggestion_source || item.suggestionSource || ''
+		const collectionStatus = collections.length || newCollections.length || collectionRecommendations.length
+			? suggestionSource == 'fallback' ? 'fallback' : 'suggestions'
+			: 'no_match'
+		const tagsStatus = tags.length || newTags.length
+			? suggestionSource == 'fallback' ? 'fallback' : 'suggestions'
+			: 'no_match'
 
 		yield put({
 			type: BOOKMARK_SUGGESTED_FIELDS,
 			link: obj.link,
-			collections: (item.collections || []).map(({$id})=>$id),
-			tags: item.tags || [],
-			new_tags: item.new_tags || []
+			field,
+			requestId,
+			collections: collections.map(collection => collection?.$id ?? collection?.id ?? collection?._id ?? collection),
+			tags,
+			new_tags: newTags,
+			new_collections: newCollections,
+			collection_recommendations: collectionRecommendations,
+			suggestion_status: suggestionStatus,
+			suggestion_source: suggestionSource,
+			collection_status: collectionStatus,
+			tags_status: tagsStatus
 		})
+		let latestRequestId
+		if (requestId)
+			latestRequestId = yield select(state=>{
+				const value = state.bookmarks.suggestedFields[obj.link]
+				return field == 'collection' ? value?.collectionRequestId : field == 'tags' ? value?.tagsRequestId : value?.requestId
+			})
+		if (!requestId || !latestRequestId || requestId == latestRequestId)
+			if (typeof onSuccess == 'function') onSuccess({ status: suggestionStatus, source: suggestionSource })
 	} catch (error) {
+		let latestRequestId
+		if (requestId)
+			latestRequestId = yield select(state=>{
+				const value = state.bookmarks.suggestedFields[obj.link]
+				return field == 'collection' ? value?.collectionRequestId : field == 'tags' ? value?.tagsRequestId : value?.requestId
+			})
+		if ((!requestId || !latestRequestId || requestId == latestRequestId) && typeof onFail == 'function') onFail(error)
 		console.error(error)
 	}
 }

@@ -1,6 +1,7 @@
 import _ from 'lodash-es'
 import { REHYDRATE } from 'redux-persist/src/constants'
 import { USER_LOAD_SUCCESS, USER_UPDATE_SUCCESS, USER_UPDATE_REQ } from '../constants/user'
+import { DEFAULT_AI_NOTE_PROMPT } from '../constants/ai'
 import Immutable from 'seamless-immutable'
 
 export default function(state = initialState, action){switch (action.type) {
@@ -83,6 +84,8 @@ const initialState = Immutable({
 
 	ai_suggestions:			true,
 	ai_assistant:			true,
+	ai_note_prompt:			DEFAULT_AI_NOTE_PROMPT,
+	ai_note_thinking:		false,
 })
 
 //this keys can be kept untouched on reset

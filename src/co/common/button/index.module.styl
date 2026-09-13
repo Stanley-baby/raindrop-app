@@ -140,7 +140,7 @@
 .button[data-variant='dotted'] {
     background: var(--background-color)
     color: var(--primary-text-color)
-    border: var(--shadow-height) dashed unquote('color-mix(in srgb, var(--tint, var(--secondary-text-color)) 65%, transparent)')
+    border: var(--shadow-height) dashed unquote('color-mix(in srgb, var(--confidence-border-color, var(--tint, var(--secondary-text-color))) 65%, transparent)')
 
     &[disabled] {
         box-shadow: none
@@ -150,7 +150,7 @@
 
     @media (pointer: fine) {
         &:hover:not(:active) {
-            border-color: var(--disable-text-color)
+            border-color: var(--confidence-border-color, var(--disable-text-color))
         }
     }
 

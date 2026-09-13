@@ -7,6 +7,8 @@ import {
 	BOOKMARKS_REPARSE_INPLACE
 } from '../../constants/bookmarks'
 
+let suggestionRequestId = 0
+
 //High level API
 export const oneLoad = (_id, onSuccess, onFail)=>({
 	type: BOOKMARK_LOAD_REQ,
@@ -87,9 +89,14 @@ export const oneUpdate = (_id, set={}, onSuccess, onFail)=>({
 	onFail: wrapFunc(onFail)
 })
 
-export const suggestFields = (obj={})=>({
+export const suggestFields = (obj={}, force=false, onSuccess, onFail, field='all')=>({
 	type: BOOKMARK_SUGGEST_FIELDS,
 	obj, //{link, title, excerpt, ...etc}
+	force,
+	field,
+	requestId: ++suggestionRequestId,
+	onSuccess: wrapFunc(onSuccess),
+	onFail: wrapFunc(onFail)
 })
 
 //Many

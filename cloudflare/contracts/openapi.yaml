@@ -797,6 +797,23 @@ paths:
           description: Login required.
         '500':
           $ref: '#/components/responses/InternalError'
+  /v1/raindrops/links:
+    get:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:read]
+      responses:
+        '200':
+          description: Newline-delimited Bookmark IDs and encoded URLs for the browser extension.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          description: Login required.
+        '500':
+          $ref: '#/components/responses/InternalError'
   /v1/raindrops/{collectionId}:
     parameters:
       - in: path
@@ -2328,13 +2345,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [raindropId]
               properties:
                 raindropId: {type: integer, minimum: 1}
+                link: {type: string, format: uri}
+                title: {type: string, maxLength: 500}
                 language: {type: string, maxLength: 32}
                 provider: {type: string, enum: [workers_ai, custom], description: Explicit provider choice.}
       responses:
-        '200': {description: Authorized Collection and Tag suggestions.}
+        '200': {description: Authorized Collection, new Collection, and Tag suggestions.}
         '400': {description: Invalid Bookmark input.}
         '401': {description: Login required.}
         '404': {description: Bookmark is not owned by or shared with the User.}
@@ -2348,13 +2366,17 @@ paths:
           application/json:
             schema:
               type: object
-              required: [raindropId]
               properties:
                 raindropId: {type: integer, minimum: 1}
+                link: {type: string, format: uri}
+                title: {type: string, maxLength: 500}
                 language: {type: string, maxLength: 32}
+                field: {type: string, enum: [description, note], default: description}
+                notePrompt: {type: string, maxLength: 4000, description: User-configured instruction for note drafts.}
+                thinking: {type: boolean, description: Enable reasoning for compatible models when drafting a note.}
                 provider: {type: string, enum: [workers_ai, custom], description: Explicit provider choice.}
       responses:
-        '200': {description: Editable Description Draft with matching source links; no Bookmark is written.}
+        '200': {description: Editable Description or Note Draft with matching source links; no Bookmark is written.}
         '400': {description: Invalid Bookmark input.}
         '401': {description: Login required.}
         '404': {description: Bookmark is not owned by or shared with the User.}

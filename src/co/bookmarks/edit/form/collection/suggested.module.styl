@@ -29,6 +29,12 @@
     }
 }
 
+.empty {
+    margin-top: var(--padding-small)
+    color: var(--disable-text-color)
+    font-size: .85em
+}
+
 .path {
     max-width: 15ch
     overflow: hidden
@@ -45,11 +51,60 @@
 
 .suggestion {
     --shadow-color: var(--shadow-light-color)
+    display: inline-flex
+    gap: var(--padding-mini)
+
+    &[data-confidence='high'] {
+        --confidence-border-color: var(--success-color)
+    }
+
+    &[data-confidence='medium'] {
+        --confidence-border-color: var(--note-color)
+    }
+
+    &[data-confidence='low'] {
+        --confidence-border-color: var(--danger-color)
+    }
+
     * {
         --icon-size: var(--padding-medium)
     }
 
     &[data-tint]:not([data-tint='']) {
         background: unquote('color-mix(in srgb, var(--tint) 12%, transparent)')
+    }
+
+    &[data-is-new=true] {
+        color: var(--accent-color)
+    }
+
+    &[data-selected=true] {
+        box-shadow: inset 0 0 0 1px var(--accent-color)
+    }
+}
+
+.confidence {
+    display: inline-flex
+    align-items: center
+    gap: 2px
+    font-size: .75em
+    opacity: .75
+}
+
+.meter {
+    width: 18px
+    height: 3px
+    border-radius: 3px
+    background: var(--disable-text-color)
+    position: relative
+    overflow: hidden
+    color: var(--confidence-border-color, var(--secondary-text-color))
+
+    &::after {
+        content: ''
+        display: block
+        width: var(--confidence, 0%)
+        height: 100%
+        background: currentColor
     }
 }

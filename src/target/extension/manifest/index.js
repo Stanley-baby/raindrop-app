@@ -7,7 +7,7 @@ function file({ emitFile }, filename) {
 	return name
 }
 
-module.exports = ({ vendor, production=false, apiOrigin='https://api.example.com', appOrigin='https://app.example.com' }, l) => {
+module.exports = ({ vendor, production=false, environment='production', apiOrigin='https://api.example.com', appOrigin='https://app.example.com' }, l) => {
 	const { version } = JSON.parse(fs.readFileSync(`${__dirname}/../../../../package.json`, 'utf-8'))
 	const apiHostPermission = `${new URL(apiOrigin).origin}/*`
 
@@ -24,7 +24,7 @@ module.exports = ({ vendor, production=false, apiOrigin='https://api.example.com
 			version_name:	version,
 		} : {}),
 
-		name:			'Raindrop.io'+(!production?' (Dev)':''),
+		name:			environment == 'selfhosted' ? 'Raindrop.io (Cloudflare)' : 'Raindrop.io'+(!production?' (Dev)':''),
 		description:	'__MSG_appDesc__',
 		homepage_url:	appOrigin,
 		author:			'Mussabekov Rustem',

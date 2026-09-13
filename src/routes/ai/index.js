@@ -61,6 +61,7 @@ export default function AiPage() {
     const [providerKey, setProviderKey] = useState('')
     const [savingProvider, setSavingProvider] = useState(false)
     const [failedProvider, setFailedProvider] = useState('')
+    const [failedAction, setFailedAction] = useState('')
     const [lastMessage, setLastMessage] = useState('')
     const [loading, setLoading] = useState(true)
     const [refreshing, setRefreshing] = useState(false)
@@ -128,6 +129,7 @@ export default function AiPage() {
         setInput('')
         setError('')
         setFailedProvider('')
+        setFailedAction('')
         setSending(true)
         setMessages(current => [...current, { role: 'user', content: message }])
         setLastMessage(message)
@@ -143,7 +145,10 @@ export default function AiPage() {
             })
             if (!response.ok) {
                 const body = await readJson(response)
-                if (body.provider) setFailedProvider(body.provider)
+                if (body.provider) {
+                    setFailedProvider(body.provider)
+                    setFailedAction('chat')
+                }
                 const retry = body.retryAt ? ' Retry after ' + new Date(body.retryAt).toLocaleString() + '.' : ''
                 throw new Error((body.errorMessage || 'AI is unavailable') + retry)
             }
@@ -166,16 +171,20 @@ export default function AiPage() {
                 }
                 if (eventData.error) {
                     setFailedProvider(eventData.provider || selectedProvider)
+                    setFailedAction('chat')
                     setError(eventData.errorMessage || eventData.error)
                 }
                 if (eventData.done && !assistantStarted && !toolActivity && !eventData.error) {
                     setFailedProvider(eventData.provider || selectedProvider)
+                    setFailedAction('chat')
                     setError((selectedProvider === 'custom' ? 'Custom AI Provider' : 'Workers AI') + ' returned an empty response. Retry the request.')
                 }
                 if (eventData.quota) setConfig(current => ({ ...current, quota: eventData.quota }))
             })
             await load(false)
         } catch (sendError) {
+            setFailedProvider(current => current || selectedProvider)
+            setFailedAction('chat')
             setError(sendError.message)
         } finally {
             setSending(false)
@@ -222,6 +231,7 @@ export default function AiPage() {
     const chooseProvider = useCallback(value => {
         setProvider(value)
         setFailedProvider('')
+        setFailedAction('')
         setError('')
     }, [])
 
@@ -236,6 +246,7 @@ export default function AiPage() {
         setDraft(null)
         setError('')
         setFailedProvider('')
+        setFailedAction('')
         setHistoryOpen(false)
     }, [])
 
@@ -246,55 +257,81 @@ export default function AiPage() {
             send(event)
     }, [input, providerAvailable, send, sending])
 
-    const generateSuggestions = useCallback(async () => {
+    const generateSuggestions = useCallback(async (requestedProvider = provider) => {
         if (!raindropId || suggesting) return
         setSuggesting(true)
         setError('')
+        setFailedProvider('')
+        setFailedAction('')
         try {
             const response = await fetch(API_ORIGIN + '/v2/ai/suggestions', {
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ raindropId, language: t.currentLang, provider })
+                body: JSON.stringify({ raindropId, language: t.currentLang, provider: requestedProvider })
             })
             const body = await readJson(response)
             if (!response.ok) {
-                if (body.provider) setFailedProvider(body.provider)
+                setFailedProvider(body.provider || requestedProvider)
+                setFailedAction('suggestions')
                 throw new Error(body.errorMessage || 'Suggestions are unavailable')
             }
+            setFailedProvider('')
+            setFailedAction('')
             setSuggestions(body.suggestions || body.item || null)
             if (body.quota) setConfig(current => ({ ...current, quota: body.quota }))
         } catch (suggestionError) {
+            setFailedProvider(current => current || requestedProvider)
+            setFailedAction('suggestions')
             setError(suggestionError.message)
         } finally {
             setSuggesting(false)
         }
     }, [provider, raindropId, suggesting])
 
-    const generateDraft = useCallback(async () => {
+    const generateDraft = useCallback(async (requestedProvider = provider) => {
         if (!raindropId || drafting) return
         setDrafting(true)
         setError('')
+        setFailedProvider('')
+        setFailedAction('')
         try {
             const response = await fetch(API_ORIGIN + '/v2/ai/description-draft', {
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ raindropId, language: t.currentLang, provider })
+                body: JSON.stringify({ raindropId, language: t.currentLang, provider: requestedProvider })
             })
             const body = await readJson(response)
             if (!response.ok) {
-                if (body.provider) setFailedProvider(body.provider)
+                setFailedProvider(body.provider || requestedProvider)
+                setFailedAction('draft')
                 throw new Error(body.errorMessage || 'Description draft is unavailable')
             }
+            setFailedProvider('')
+            setFailedAction('')
             setDraft(String(body.draft || ''))
             if (body.quota) setConfig(current => ({ ...current, quota: body.quota }))
         } catch (draftError) {
+            setFailedProvider(current => current || requestedProvider)
+            setFailedAction('draft')
             setError(draftError.message)
         } finally {
             setDrafting(false)
         }
     }, [drafting, provider, raindropId])
+
+    const retryFailedAction = useCallback(requestedProvider => {
+        const targetProvider = requestedProvider || failedProvider
+        if (!targetProvider) return
+        setProvider(targetProvider)
+        setFailedProvider('')
+        setFailedAction('')
+        setError('')
+        if (failedAction === 'suggestions') generateSuggestions(targetProvider)
+        else if (failedAction === 'draft') generateDraft(targetProvider)
+        else if (failedAction === 'chat') send(null, targetProvider, lastMessage)
+    }, [failedAction, failedProvider, generateDraft, generateSuggestions, lastMessage, send])
 
     const applyDraft = useCallback(async () => {
         if (!raindropId || draft === null || applyingDraft) return
@@ -470,7 +507,7 @@ export default function AiPage() {
                                 <option value='custom'>Custom AI Provider{config?.custom?.configured ? '' : ' (not configured)'}</option>
                             </select>
                         </label>}
-                        {closable && <button className={s.closeButton} type='button' onClick={() => postToHost({ type: 'ai:close' })}>
+                        {closable && <button className={s.closeButton} type='button' aria-label='Close AI' onClick={() => postToHost({ type: 'ai:close' })}>
                             <Icon name='close' />
                             <span>Close</span>
                         </button>}
@@ -509,9 +546,9 @@ export default function AiPage() {
                             {failedProvider && <div className={s.providerError} role='alert'>
                                 <span>{failedProvider === 'custom' ? 'Custom AI Provider failed.' : 'Workers AI failed.'}</span>
                                 <div className={s.inlineActions}>
-                                    <button type='button' onClick={() => send(null, failedProvider, lastMessage)}>Retry {failedProvider === 'custom' ? 'Custom' : 'Workers AI'}</button>
-                                    {failedProvider === 'custom' && <button type='button' onClick={() => send(null, 'workers_ai', lastMessage)}>Use Workers AI</button>}
-                                    {failedProvider === 'workers_ai' && config?.custom?.configured && <button type='button' onClick={() => send(null, 'custom', lastMessage)}>Use Custom AI Provider</button>}
+                                    <button type='button' onClick={() => retryFailedAction(failedProvider)}>Retry {failedProvider === 'custom' ? 'Custom' : 'Workers AI'}</button>
+                                    {failedProvider === 'custom' && <button type='button' onClick={() => retryFailedAction('workers_ai')}>Use Workers AI</button>}
+                                    {failedProvider === 'workers_ai' && config?.custom?.configured && <button type='button' onClick={() => retryFailedAction('custom')}>Use Custom AI Provider</button>}
                                 </div>
                             </div>}
 

@@ -177,6 +177,12 @@
         },
         {
             "method": "GET",
+            "path": "/v1/raindrops/links",
+            "authentication": "required",
+            "responses": [200, 401, 500]
+        },
+        {
+            "method": "GET",
             "path": "/v1/raindrops/:collectionId",
             "authentication": "required",
             "responses": [200, 400, 401, 500]

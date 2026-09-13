@@ -9,7 +9,8 @@ import {
 import ApiError from './error'
 
 function* get(url, overrideOptions={}) {
-	const res = yield req(url, overrideOptions, API_RETRIES)
+	const { retries=API_RETRIES, ...options } = overrideOptions
+	const res = yield req(url, options, retries)
 
 	var json = {}
 	if (res.headers){
@@ -43,15 +44,16 @@ function* put(url, data={}, options={}) {
 }
 
 function* post(url, data={}, options={}, retries=0) {
+	const { retries: optionRetries, ...requestOptions } = options
 	const res = yield req(url, {
-		...options,
+		...requestOptions,
 		method: 'POST',
 		headers: {
 			'Accept': 'application/json',
 			'Content-Type': 'application/json'
 		},
 		body: JSON.stringify(data)
-	}, retries)
+	}, optionRetries ?? retries)
 	const json = yield res.json()
 	checkJSON(json)
 
@@ -112,11 +114,12 @@ function* req(url, options={}, retries=0) {
 
 	for(let i = 0; i <= retries; i++){
 		const abort = new AbortController()
+		const timeout = options.timeout === 0 ? 0 : Number(options.timeout) > 0 ? Number(options.timeout) : API_TIMEOUT
 
 		try{
 			const winner = yield race({
 				req: call(fetchWrap, finalURL, {...defaultOptions, ...options, signal: abort.signal}),
-				...( options.timeout !== 0 ? { t: delay(API_TIMEOUT) } : {}) //timeout could be turned off if options.timeout=0
+				...( timeout ? { t: delay(timeout) } : {}) //timeout could be turned off if options.timeout=0
 			})
 
 			if (!winner.req){
@@ -143,11 +146,16 @@ function* req(url, options={}, retries=0) {
 
 const fetchWrap = (url, options)=>(
 	fetch(url, options)
-		.then((res)=>{
+		.then(async(res)=>{
 			if (res.status >= 200 && res.status < 300)
 				return res
-			else
-				throw new ApiError({ status: res.status, errorMessage: 'fail_fetch_status' })
+			let body = {}
+			try { body = await res.clone().json() } catch {}
+			throw new ApiError({
+				status: res.status,
+				error: body.error,
+				errorMessage: body.errorMessage || 'fail_fetch_status'
+			})
 		})
 )
 

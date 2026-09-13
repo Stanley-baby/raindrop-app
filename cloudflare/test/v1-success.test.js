@@ -126,6 +126,8 @@ test('success fixtures execute every v1 route with an authenticated verified set
             const response = await worker.fetch(new Request('https://api.test' + path, { method: item.method, headers, body }), env)
             const expected = typeof item.cases.success === 'object' ? item.cases.success.status : item.cases.success
             assert.equal(response.status, expected, `${item.method} ${item.path}`)
+            if (item.path === '/v1/raindrops/links')
+                assert.equal(await response.text(), '1</-rl-/>https%3A%2F%2Fexample.test')
             if (item.cases.sync !== null) {
                 const marker = await response.json()
                 assert.equal(typeof marker.version, 'number', `${item.method} ${item.path} version marker`)

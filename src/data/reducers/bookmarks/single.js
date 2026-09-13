@@ -212,20 +212,81 @@ export default function(state, action) {
 			const { obj } = action
 			const link = obj?.link
 
-			if (!link || state.suggestedFields[link]) {
+			if (!link || state.suggestedFields[link] && !action.force) {
 				action.ignore = true
 				return state
 			}
 
-			return state
-				.setIn(['suggestedFields', link], {})
+			const current = state.getIn(['suggestedFields', link]) || {}
+			const field = action.field || 'all'
+			const next = { ...current, pending: true }
+			if (field == 'collection') {
+				next.collectionRequestId = action.requestId
+				next.collections = []
+				next.new_collections = []
+				next.collection_recommendations = []
+				next.collection_status = ''
+				next.collection_source = ''
+			} else if (field == 'tags') {
+				next.tagsRequestId = action.requestId
+				next.tags = []
+				next.new_tags = []
+				next.tags_status = ''
+				next.tags_source = ''
+			} else {
+				next.requestId = action.requestId
+				next.collectionRequestId = action.requestId
+				next.tagsRequestId = action.requestId
+				next.collections = []
+				next.tags = []
+				next.new_tags = []
+				next.new_collections = []
+				next.collection_recommendations = []
+				next.suggestion_status = ''
+				next.suggestion_source = ''
+				next.collection_status = ''
+				next.tags_status = ''
+			}
+
+			return state.setIn(['suggestedFields', link], next)
 		}
 
 		case BOOKMARK_SUGGESTED_FIELDS:{
-			const { link, collections=[], tags=[], new_tags=[] } = action
+			const { link, collections=[], tags=[], new_tags=[], new_collections=[], collection_recommendations=[], suggestion_status='', suggestion_source='', collection_status='', tags_status='' } = action
+			const current = state.getIn(['suggestedFields', link]) || {}
+			const field = action.field || 'all'
+			const requestKeys = field == 'collection' ? [current.collectionRequestId] : field == 'tags' ? [current.tagsRequestId] : [current.requestId, current.collectionRequestId, current.tagsRequestId]
+			if (action.requestId && requestKeys.some(requestKey=>requestKey && action.requestId != requestKey))
+				return state
 
-			return state
-				.setIn(['suggestedFields', link], { collections, tags, new_tags })
+			const next = { ...current, pending: false }
+			if (field == 'collection') Object.assign(next, {
+				collections,
+				new_collections,
+				collection_recommendations,
+				collection_status: collection_status || suggestion_status,
+				collection_source: action.collection_source || suggestion_source
+			})
+			else if (field == 'tags') Object.assign(next, {
+				tags,
+				new_tags,
+				tags_status: tags_status || suggestion_status,
+				tags_source: action.tags_source || suggestion_source
+			})
+			else Object.assign(next, {
+				requestId: action.requestId,
+				collections,
+				tags,
+				new_tags,
+				new_collections,
+				collection_recommendations,
+				suggestion_status,
+				suggestion_source,
+				collection_status: collection_status || suggestion_status,
+				tags_status: tags_status || suggestion_status
+			})
+
+			return state.setIn(['suggestedFields', link], next)
 		}
 
 		//Update tags

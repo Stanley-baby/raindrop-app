@@ -1,5 +1,41 @@
+.field {
+    min-width: 0
+    display: flex
+    flex-direction: column
+    gap: var(--padding-small)
+}
+
 .note {
     position: relative
+}
+
+.generating .text {
+    color: transparent
+    caret-color: transparent
+}
+
+.loading {
+    position: absolute
+    top: var(--padding-small)
+    left: var(--padding-small)
+    display: flex
+    align-items: center
+    gap: var(--padding-small)
+    color: var(--accent-color)
+    pointer-events: none
+
+    i {
+        width: 1px
+        height: 1.2em
+        background: currentColor
+        animation: blink 1s step-end infinite
+    }
+}
+
+@keyframes blink {
+    50% {
+        opacity: 0
+    }
 }
 
 .button {

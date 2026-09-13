@@ -924,8 +924,8 @@
         top: 0
         bottom: 0
         left: 0
-        width: 17rem
-        max-width: 88vw
+        width: 320px
+        max-width: calc(100vw - 2rem)
         box-shadow: .4rem 0 1.2rem unquote('color-mix(in srgb, var(--primary-text-color) 12%, transparent)')
         transform: translateX(-105%)
         transition: transform .22s ease
@@ -982,7 +982,7 @@
         padding-top: var(--padding-small)
     }
 
-    .closeButton span {
+    .closeButton > span:last-child {
         display: none
     }
 }

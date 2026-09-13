@@ -761,6 +761,30 @@
     },
     {
       "method": "GET",
+      "path": "/v1/raindrops/links",
+      "request": {
+        "method": "GET",
+        "path": "/v1/raindrops/links",
+        "headers": {
+          "Cookie": "{{session-cookie}}"
+        }
+      },
+      "responses": [
+        200,
+        401,
+        500
+      ],
+      "cases": {
+        "success": 200,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "GET",
       "path": "/v1/raindrops/:collectionId",
       "request": {
         "method": "GET",

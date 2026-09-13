@@ -27,6 +27,12 @@
     }
 }
 
+.empty {
+    margin-top: var(--padding-small)
+    color: var(--disable-text-color)
+    font-size: .85em
+}
+
 .suggestion {
     --shadow-color: var(--shadow-light-color)
     * {
@@ -34,6 +40,11 @@
     }
 
     &[data-is-new=true] {
-        color: var(--secondary-text-color)
+        color: var(--accent-color)
+        --tint: var(--accent-color)
+    }
+
+    &[data-selected=true] {
+        box-shadow: inset 0 0 0 1px var(--accent-color)
     }
 }

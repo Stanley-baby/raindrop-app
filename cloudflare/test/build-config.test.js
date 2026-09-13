@@ -55,9 +55,10 @@ test('Pages serves client-side routes through the Web entry point', () => {
     assert.match(fs.readFileSync(new URL('../../src/assets/_redirects', import.meta.url), 'utf8'), /^\/\*\s+\/index\.html\s+200$/m)
 })
 
-test('Pages framing stays limited to the same origin for the AI host UI', () => {
+test('Pages framing allows the Web origin and Chrome extension AI host UI', () => {
     const headers = fs.readFileSync(new URL('../../src/assets/_headers', import.meta.url), 'utf8')
-    assert.match(headers, /\/\*\s+X-Frame-Options: SAMEORIGIN/m)
+    assert.match(headers, /\/\*\s+Content-Security-Policy: frame-ancestors 'self' chrome-extension:\/\/\* moz-extension:\/\/\* safari-web-extension:\/\/\*/m)
+    assert.doesNotMatch(headers, /X-Frame-Options/i)
 })
 
 test('Chrome extension development and Beta builds stay isolated', () => {
@@ -77,15 +78,31 @@ test('Independent Service capability is enabled for self-hosted profiles', () =>
 })
 
 test('self-hosted builds accept operator-supplied origins', () => {
-    const definitions = definitionsFor(web({
+    const options = {
         environment: 'selfhosted',
         apiOrigin: 'https://api.operator.example',
         appOrigin: 'https://app.operator.example',
         helpOrigin: 'https://github.com/operator/bookmarks'
-    }))
+    }
+    const definitions = definitionsFor(web(options))
 
     assert.equal(valueFor(definitions, 'API_ORIGIN'), 'https://api.operator.example')
     assert.equal(valueFor(definitions, 'APP_ORIGIN'), 'https://app.operator.example')
+    assert.equal(valueFor(definitions, 'AI_PAGE_ORIGIN'), 'https://app.operator.example/ai')
     assert.equal(valueFor(definitions, 'HELP_ORIGIN'), 'https://github.com/operator/bookmarks')
     assert.equal(valueFor(definitions, 'WORKERS_BASE_URL'), '')
+
+    const chromeDefinitions = definitionsFor(extension({ ...options, vendor: 'chrome' }))
+    assert.equal(valueFor(chromeDefinitions, 'AI_PAGE_ORIGIN'), 'https://app.operator.example/ai')
+})
+
+test('self-hosted production builds reject placeholder origins', () => {
+    assert.throws(
+        () => web({ environment: 'selfhosted', production: true }),
+        /API_ORIGIN and APP_ORIGIN/
+    )
+    assert.throws(
+        () => extension({ environment: 'selfhosted', production: true, vendor: 'chrome' }),
+        /API_ORIGIN and APP_ORIGIN/
+    )
 })

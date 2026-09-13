@@ -1,0 +1,46 @@
+.root {
+    display: contents
+}
+
+.actions {
+    align-self: flex-end
+    display: flex
+    align-items: center
+    flex-wrap: wrap
+    justify-content: flex-end
+    gap: var(--padding-micro)
+}
+
+.button {
+    color: var(--accent-color)
+}
+
+.choiceLabel,
+.error {
+    font-size: var(--secondary-font-size)
+}
+
+.choiceLabel {
+    color: var(--secondary-text-color)
+}
+
+.preview {
+    order: 1
+    max-height: 8rem
+    overflow: auto
+    padding: var(--padding-small)
+    border-radius: var(--border-radius)
+    color: var(--primary-text-color)
+    background: var(--alternative-background-color)
+    white-space: pre-wrap
+}
+
+.error {
+    order: 1
+    align-self: flex-end
+    display: flex
+    align-items: center
+    justify-content: flex-end
+    gap: var(--padding-small)
+    color: var(--danger-color)
+}

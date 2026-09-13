@@ -7,7 +7,6 @@ import {
 } from '../../helpers/bookmarks'
 
 const emptyObject = {}
-const emptyArray = []
 
 //Single
 export const bookmark = ({bookmarks}, _id)=>bookmarks.elements[_id] ? bookmarks.elements[_id] : blankBookmark
@@ -52,22 +51,21 @@ export const makeCreatorRef = ()=>createSelector(
 
 export const makeSuggestedFields = ()=>createSelector(
 	[
-		({bookmarks}, { link })=>bookmarks.suggestedFields[link] || emptyObject,
-		(_, { collectionId })=>collectionId,
-		(_, { tags })=>tags,
-		(_, { new_tags })=>new_tags
+		({bookmarks}, { link })=>bookmarks.suggestedFields[link] || emptyObject
 	],
-	({ collections=[], tags=[], new_tags=[] }, collectionId, itemTags)=>{
+	({ collections=[], tags=[], new_tags=[], new_collections=[], collection_recommendations=[], suggestion_status='', suggestion_source='', collection_status='', tags_status='', collection_source='', tags_source='' })=>{
 		return ({
-			collections: collections?.[0] == collectionId ? 
-				emptyArray : 
-				[...collections]
-					.filter(cid=>cid!=collectionId)
-					.splice(0, 5),
-			tags: tags
-				.filter(tag=>!itemTags?.includes(tag)),
-			new_tags: new_tags
-				.filter(tag=>!itemTags?.includes(tag))
+			collections: [...collections].splice(0, 5),
+			tags: [...tags],
+			new_tags: [...new_tags],
+			new_collections: [...new_collections].splice(0, 3),
+			collection_recommendations: [...collection_recommendations].splice(0, 8),
+			suggestion_status,
+			suggestion_source,
+			collection_status: collection_status || suggestion_status,
+			tags_status: tags_status || suggestion_status,
+			collection_source: collection_source || suggestion_source,
+			tags_source: tags_source || suggestion_source
 		})
 	}
 )
