@@ -38,3 +38,6 @@ cloudflare/wrangler.private.toml
 
 # Local reference extension files
 /参考插件/
+
+# Local agent, QA, screenshot, and staging artifacts (never part of source/release)
+/.local/
