@@ -63,6 +63,12 @@
         },
         {
             "method": "PUT",
+            "path": "/v1/collections",
+            "authentication": "required",
+            "responses": [200, 400, 401, 500]
+        },
+        {
+            "method": "PUT",
             "path": "/v1/collections/clean",
             "authentication": "required",
             "responses": [200, 401, 500]

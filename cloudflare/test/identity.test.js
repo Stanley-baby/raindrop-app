@@ -116,14 +116,14 @@ class MemoryDatabase {
             if (sql.includes('INSERT INTO bookmarks')) {
                 const modern = sql.includes('description')
                 const bookmark = modern
-                    ? { id: this.bookmarks.length + 1, user_id: values[0], url: values[1], title: values[2], description: values[3], note: values[4], highlights: values[5], created_at: values[6], updated_at: values[7], collection_id: values[8], tags: values[9], removed_at: null, removed_batch: null, change_version: this.nextChangeVersion }
-                    : { id: this.bookmarks.length + 1, user_id: values[0], url: values[1], title: values[2], description: '', note: '', created_at: values[3], updated_at: values[4], collection_id: values[5], tags: values[6], highlights: '[]', removed_at: null, removed_batch: null, change_version: this.nextChangeVersion }
+                    ? { id: this.bookmarks.length + 1, user_id: values[0], url: values[1], title: values[2], description: values[3], note: values[4], highlights: values[5], reminder: values[6], important: Number(values[7] || 0), lang: values[8] || '', broken: Number(values[9] || 0), duplicate: values[10] || null, created_at: values[11], updated_at: values[12], collection_id: values[13], tags: values[14], cover: '', type: 'link', removed_at: null, removed_batch: null, change_version: this.nextChangeVersion }
+                    : { id: this.bookmarks.length + 1, user_id: values[0], url: values[1], title: values[2], description: '', note: '', created_at: values[3], updated_at: values[4], collection_id: values[5], tags: values[6], highlights: '[]', cover: '', important: 0, type: 'link', removed_at: null, removed_batch: null, change_version: this.nextChangeVersion }
                 this.bookmarks.push(bookmark)
                 this.changes.push({ version: this.nextChangeVersion++, user_id: bookmark.user_id, bookmark_id: bookmark.id, changed_at: bookmark.updated_at })
                 return { meta: { last_row_id: bookmark.id, changes: 1 } }
             }
             if (sql.includes('INSERT INTO collections')) {
-                const collection = { id: this.collections.length + 1, user_id: values[0], title: values[1], parent_id: values[2], created_at: values[3], updated_at: values[4], removed_at: null, removed_batch: null }
+                const collection = { id: this.collections.length + 1, user_id: values[0], title: values[1], parent_id: values[2], created_at: values[3], updated_at: values[4], slug: values[5], is_public: 0, expanded: Number(values[6] || 0), sort: Number(values[7] || 0), view: 'list', removed_at: null, removed_batch: null }
                 this.collections.push(collection)
                 return { meta: { last_row_id: collection.id, changes: 1 } }
             }
@@ -141,14 +141,37 @@ class MemoryDatabase {
                 this.deletions.push({ user_id: values[0], requested_at: values[1], purge_after: values[2] })
                 return { meta: { changes: 1 } }
             }
+            if (sql.includes('UPDATE bookmarks SET important = ?')) {
+                const bookmark = this.bookmarks.find(item => item.id === values[1] && item.user_id === values[2])
+                if (!bookmark) return { meta: { changes: 0 } }
+                Object.assign(bookmark, { important: Number(values[0]) ? 1 : 0, change_version: this.nextChangeVersion })
+                this.changes.push({ version: this.nextChangeVersion++, user_id: bookmark.user_id, bookmark_id: bookmark.id, changed_at: bookmark.updated_at })
+                return { meta: { changes: 1 } }
+            }
             if (sql.includes('UPDATE bookmarks SET url')) {
                 const modern = sql.includes('description = ?')
-                const bookmark = this.bookmarks.find(item => item.id === values[modern ? 11 : 7] && item.user_id === values[modern ? 12 : 8])
+                const bookmark = this.bookmarks.find(item => item.id === values[modern ? 16 : 7] && item.user_id === values[modern ? 17 : 8])
                 Object.assign(bookmark, modern
-                    ? { url: values[0], title: values[1], description: values[2], note: values[3], cover: values[4], collection_id: values[5], tags: values[6], highlights: values[7], removed_at: values[8], removed_batch: values[9], updated_at: values[10], change_version: this.nextChangeVersion }
+                    ? { url: values[0], title: values[1], description: values[2], note: values[3], cover: values[4], collection_id: values[5], tags: values[6], highlights: values[7], reminder: values[8], important: Number(values[9] || 0), lang: values[10] || '', broken: Number(values[11] || 0), duplicate: values[12] || null, removed_at: values[13], removed_batch: values[14], updated_at: values[15], change_version: this.nextChangeVersion }
                     : { url: values[0], title: values[1], collection_id: values[2], tags: values[3], highlights: values[4], removed_at: values[5], updated_at: values[6], change_version: this.nextChangeVersion })
                 this.changes.push({ version: this.nextChangeVersion++, user_id: bookmark.user_id, bookmark_id: bookmark.id, changed_at: bookmark.updated_at })
                 return { meta: { changes: 1 } }
+            }
+            if (sql.includes('UPDATE collections SET title = ?')) {
+                const modern = sql.includes('view = ?')
+                const collection = this.collections.find(item => item.id === values[modern ? 8 : 5] && item.user_id === values[modern ? 9 : 6])
+                if (!collection) return { meta: { changes: 0 } }
+                Object.assign(collection, modern
+                    ? { title: values[0], parent_id: values[1], slug: values[2], is_public: values[3], view: values[4], expanded: Number(values[5] || 0), sort: Number(values[6] || 0), updated_at: values[7] }
+                    : { title: values[0], parent_id: values[1], slug: values[2], is_public: values[3], updated_at: values[4] })
+                return { meta: { changes: 1 } }
+            }
+            if (sql.includes('UPDATE collections SET') && sql.includes('WHERE user_id = ?') && (sql.includes('view = ?') || sql.includes('expanded = ?'))) {
+                const userId = values.at(-1)
+                const active = this.collections.filter(item => item.user_id === userId && !item.removed_at)
+                if (sql.includes('view = ?')) active.forEach(item => { item.view = values[0]; item.updated_at = values[1] })
+                else active.forEach(item => { item.expanded = Number(values[0] || 0); item.updated_at = values[1] })
+                return { meta: { changes: active.length } }
             }
             if (sql.includes('UPDATE bookmarks SET removed_at')) {
                 if (sql.includes('removed_at = NULL')) {
@@ -310,6 +333,13 @@ class MemoryDatabase {
                 let items = this.collections.filter(item => item.user_id === values[0])
                 if (sql.includes('removed_at IS NOT NULL')) items = items.filter(item => item.removed_at)
                 else if (sql.includes('removed_at IS NULL')) items = items.filter(item => !item.removed_at)
+                if (sql.includes('ORDER BY LOWER(c.title)')) items.sort((left, right) => left.title.localeCompare(right.title) || left.id - right.id)
+                else if (sql.includes('ORDER BY count DESC')) items.sort((left, right) => {
+                    const leftCount = this.bookmarks.filter(bookmark => bookmark.collection_id === left.id && !bookmark.removed_at).length
+                    const rightCount = this.bookmarks.filter(bookmark => bookmark.collection_id === right.id && !bookmark.removed_at).length
+                    return rightCount - leftCount || left.title.localeCompare(right.title)
+                })
+                else items.sort((left, right) => Number(left.sort || 0) - Number(right.sort || 0) || left.id - right.id)
                 return { results: items.map(item => ({ ...item, count: this.bookmarks.filter(bookmark => bookmark.collection_id === item.id && !bookmark.removed_at).length })) }
             }
             if (sql.includes('FROM collections WHERE user_id'))
@@ -879,6 +909,13 @@ test('nested collections, bookmark moves, tags, and highlights stay user-scoped'
         }), testEnv)
         const cookie = login.headers.get('Set-Cookie').split(';')[0]
 
+        const groupUpdate = await worker.fetch(new Request('https://api.example.test/v1/user', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+            body: JSON.stringify({ groups: [{ _id: 'g-qa', title: 'QA', collections: [], hidden: false, sort: 0 }] })
+        }), testEnv)
+        assert.equal(groupUpdate.status, 200)
+        assert.deepEqual((await groupUpdate.json()).user.groups, [{ _id: 'g-qa', title: 'QA', collections: [], hidden: false, sort: 0 }])
+
         const rootResponse = await worker.fetch(request('/v1/collection', { title: 'Parent Collection' }, { Cookie: cookie }), testEnv)
         assert.equal(rootResponse.status, 201)
         const root = (await rootResponse.json()).item
@@ -910,6 +947,10 @@ test('nested collections, bookmark moves, tags, and highlights stay user-scoped'
         assert.equal(bookmark.collectionId, Number(child._id))
         assert.deepEqual(bookmark.tags, ['alpha', 'beta'])
 
+        const tagged = await worker.fetch(request('/v1/raindrops/0?search=' + encodeURIComponent('#alpha'), null, { Cookie: cookie }), testEnv)
+        assert.equal(tagged.status, 200)
+        assert.deepEqual((await tagged.json()).items.map(item => item._id), [bookmark._id])
+
         const invalidTags = await worker.fetch(request('/v1/raindrop', {
             link: 'https://example.com/invalid-tags', title: 'Invalid tags', tags: ['x'.repeat(101)]
         }, { Cookie: cookie }), testEnv)
@@ -923,7 +964,47 @@ test('nested collections, bookmark moves, tags, and highlights stay user-scoped'
         assert.equal((await moved.json()).item.collectionId, Number(root._id))
 
         const filters = await worker.fetch(request('/v1/filters/0?search=alpha&tagsSort=-count', null, { Cookie: cookie }), testEnv)
-        assert.deepEqual((await filters.json()).tags, [{ _id: 'alpha', count: 1 }])
+        const filterBody = await filters.json()
+        assert.deepEqual(filterBody.tags, [{ _id: 'alpha', count: 1 }])
+        assert.deepEqual(filterBody.types, [{ _id: 'link', count: 1 }])
+        assert.deepEqual(filterBody.domains, [{ _id: 'example.com', count: 1 }])
+        assert.deepEqual(filterBody.total, { count: 1 })
+
+        const typed = await worker.fetch(request('/v1/raindrops/0?search=' + encodeURIComponent('type:link'), null, { Cookie: cookie }), testEnv)
+        assert.deepEqual((await typed.json()).items.map(item => item._id), [bookmark._id])
+
+        const info = await worker.fetch(request('/v1/raindrops/0?search=' + encodeURIComponent('info:'), null, { Cookie: cookie }), testEnv)
+        assert.deepEqual((await info.json()).items, [])
+
+        const combined = await worker.fetch(request('/v1/raindrops/0?search=' + encodeURIComponent('Issue 6 type:link'), null, { Cookie: cookie }), testEnv)
+        assert.deepEqual((await combined.json()).items.map(item => item._id), [bookmark._id])
+
+        const createdMonth = new Date(db.bookmarks.find(item => item.id === bookmark._id).created_at).toISOString().slice(0, 7)
+        const created = await worker.fetch(request('/v1/raindrops/0?search=' + encodeURIComponent('created:' + createdMonth), null, { Cookie: cookie }), testEnv)
+        assert.deepEqual((await created.json()).items.map(item => item._id), [bookmark._id])
+
+        const favoriteResponse = await worker.fetch(request('/v1/raindrop', {
+            link: 'https://example.com/issue6-favorite', title: 'Issue 6 favorite', important: true
+        }, { Cookie: cookie }), testEnv)
+        assert.equal(favoriteResponse.status, 201)
+        const favorite = (await favoriteResponse.json()).item
+        assert.equal(favorite.important, true)
+        assert.equal(favorite.domain, 'example.com')
+        assert.equal(favorite.type, 'link')
+
+        const unstarred = await worker.fetch(new Request('https://api.example.test/v1/raindrop/' + favorite._id, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+            body: JSON.stringify({ important: false })
+        }), testEnv)
+        assert.equal((await unstarred.json()).item.important, false)
+        const restarred = await worker.fetch(new Request('https://api.example.test/v1/raindrop/' + favorite._id, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+            body: JSON.stringify({ important: true })
+        }), testEnv)
+        assert.equal((await restarred.json()).item.important, true)
+
+        const favoriteFilter = await worker.fetch(request('/v1/filters/0', null, { Cookie: cookie }), testEnv)
+        assert.deepEqual((await favoriteFilter.json()).important, { count: 1 })
 
         const recentTags = await worker.fetch(request('/v1/tags/recent', null, { Cookie: cookie }), testEnv)
         assert.equal((await recentTags.json()).items[0]._id, 'alpha')
@@ -1156,6 +1237,97 @@ test('recycle bin, metadata search, and last-write-wins stay user-scoped', async
         const latestBody = await latest.json()
         const winningResponse = winner.find(body => body.item.changeVersion === latestBody.item.changeVersion)
         assert.equal(latestBody.item.title, winningResponse.item.title)
+    } finally {
+        globalThis.fetch = originalFetch
+    }
+})
+
+test('review fixes keep bookmark sync metadata and sidebar state', async () => {
+    const db = new MemoryDatabase()
+    const testEnv = { ...env(db), TURNSTILE_ENABLED: 'false' }
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async (url, options) => url === 'https://api.resend.com/emails' ? Response.json({ id: 'email_review_fix' }) : originalFetch(url, options)
+    const api = (path, method, body, cookie) => new Request('https://api.example.test' + path, {
+        method,
+        headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    })
+
+    try {
+        const signup = await worker.fetch(request('/v1/auth/email/signup', {
+            name: 'Review User', email: 'review-fix@example.test', password: 'correct horse battery staple', betaAccessPassword: 'invite-only'
+        }), testEnv)
+        assert.equal(signup.status, 201)
+        const login = await worker.fetch(request('/v1/auth/email/login', {
+            email: 'review-fix@example.test', password: 'correct horse battery staple'
+        }), testEnv)
+        const cookie = login.headers.get('Set-Cookie').split(';')[0]
+
+        const collection = await worker.fetch(request('/v1/collection', { title: 'Review Collection' }, { Cookie: cookie }), testEnv)
+        const collectionId = (await collection.json()).item._id
+        const expanded = await worker.fetch(api('/v1/collection/' + collectionId, 'PUT', { expanded: true }, cookie), testEnv)
+        assert.equal(expanded.status, 200)
+        assert.equal((await expanded.json()).item.expanded, true)
+        const reordered = await worker.fetch(api('/v1/collection/' + collectionId, 'PUT', { order: 7 }, cookie), testEnv)
+        assert.equal(reordered.status, 200)
+        assert.equal((await reordered.json()).item.sort, 7)
+
+        const before = db.changes.length
+        const created = await worker.fetch(request('/v1/raindrop', {
+            link: 'https://example.com/review-favorite', title: 'Review favorite', important: true, collectionId
+        }, { Cookie: cookie }), testEnv)
+        const createdBody = await created.json()
+        assert.equal(created.status, 201)
+        assert.equal(createdBody.version, before + 1)
+        assert.equal(db.changes.length, before + 1)
+
+        const bulkBefore = db.changes.length
+        const bulk = await worker.fetch(request('/v1/raindrops', {
+            items: [{ link: 'https://example.com/review-bulk-favorite', title: 'Review bulk favorite', important: true }]
+        }, { Cookie: cookie }), testEnv)
+        assert.equal(bulk.status, 201)
+        assert.equal((await bulk.json()).version, bulkBefore + 1)
+        assert.equal(db.changes.length, bulkBefore + 1)
+
+        const updateBefore = db.changes.length
+        const updated = await worker.fetch(api('/v1/raindrop/' + createdBody.item._id, 'PUT', { important: false }, cookie), testEnv)
+        assert.equal(updated.status, 200)
+        assert.equal((await updated.json()).version, updateBefore + 1)
+        assert.equal(db.changes.length, updateBefore + 1)
+
+        const incremental = await worker.fetch(api('/v1/raindrops/0?since=' + before, 'GET', undefined, cookie), testEnv)
+        const incrementalItems = (await incremental.json()).items
+        assert.equal(incrementalItems.find(item => item._id === createdBody.item._id).important, false)
+        assert.equal(incrementalItems.find(item => item.title === 'Review bulk favorite').important, true)
+
+        const flagged = await worker.fetch(request('/v1/raindrop', {
+            link: 'https://example.com/review-flagged', title: 'Review flagged', reminder: { date: '2026-10-01T00:00:00.000Z' }, lang: 'zh', broken: true, duplicate: 42
+        }, { Cookie: cookie }), testEnv)
+        assert.equal(flagged.status, 201)
+        const flaggedId = (await flagged.json()).item._id
+        const filters = await worker.fetch(api('/v1/filters/0', 'GET', undefined, cookie), testEnv)
+        const filterBody = await filters.json()
+        assert.deepEqual(filterBody.lang, [{ _id: 'zh', count: 1 }])
+        assert.deepEqual(filterBody.reminder, { count: 1 })
+        assert.deepEqual(filterBody.broken, { count: 1 })
+        assert.deepEqual(filterBody.duplicate, { count: 1 })
+        for (const query of ['reminder:true', 'lang:zh', 'broken:true', 'duplicate:true']) {
+            const response = await worker.fetch(api('/v1/raindrops/0?search=' + encodeURIComponent(query), 'GET', undefined, cookie), testEnv)
+            assert.deepEqual((await response.json()).items.map(item => item._id), [flaggedId])
+        }
+
+        const collapsed = await worker.fetch(api('/v1/collections', 'PUT', { expanded: false }, cookie), testEnv)
+        assert.equal(collapsed.status, 200)
+        const another = await worker.fetch(request('/v1/collection', { title: 'AAA Review Collection' }, { Cookie: cookie }), testEnv)
+        assert.equal(another.status, 201)
+        const sorted = await worker.fetch(api('/v1/collections', 'PUT', { sort: 'title' }, cookie), testEnv)
+        assert.equal(sorted.status, 200)
+        const listed = await worker.fetch(api('/v1/collections/all', 'GET', undefined, cookie), testEnv)
+        const listedItems = (await listed.json()).items
+        assert.equal(listedItems.find(item => item._id === collectionId).expanded, false)
+        assert.deepEqual(listedItems.map(item => item.title), ['AAA Review Collection', 'Review Collection'])
+        const unsupported = await worker.fetch(api('/v1/collections', 'PUT', { unsupported: true }, cookie), testEnv)
+        assert.equal(unsupported.status, 400)
     } finally {
         globalThis.fetch = originalFetch
     }

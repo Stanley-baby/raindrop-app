@@ -20,7 +20,7 @@ const bodyFor = item => {
     if (p === '/v1/auth/email/login') return { email: 'fixture@example.test', password: 'fixture-password-123' }
     if (p === '/v1/auth/email/confirm') return { token: 'fixture-token' }
     if (p === '/v1/auth/google') return { betaAccessPassword: 'expected' }
-    if (p === '/v1/collections') return { ids: [1] }
+    if (p === '/v1/collections') return item.method === 'PUT' ? { view: 'grid', expanded: true, sort: 'title' } : { ids: [1] }
     if (p === '/v1/collection') return { title: 'Fixture' }
     if (p === '/v1/collection/:id') return { title: 'Fixture' }
     if (p === '/v1/tags/0') return { tag: 'old', replace: 'new' }

@@ -259,6 +259,36 @@
     },
     {
       "method": "PUT",
+      "path": "/v1/collections",
+      "request": {
+        "method": "PUT",
+        "path": "/v1/collections",
+        "headers": {
+          "Cookie": "{{session-cookie}}"
+        },
+        "body": {
+          "view": "grid",
+          "expanded": true,
+          "sort": "title"
+        }
+      },
+      "responses": [
+        200,
+        400,
+        401,
+        500
+      ],
+      "cases": {
+        "success": 200,
+        "authentication": 401,
+        "permission": null,
+        "validation": 400,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "PUT",
       "path": "/v1/collections/clean",
       "request": {
         "method": "PUT",
@@ -343,7 +373,7 @@
         "headers": {
           "Cookie": "{{session-cookie}}"
         },
-        "body": {}
+        "body": {"title": "Fixture", "expanded": true, "order": 1, "view": "grid"}
       },
       "responses": [
         200,
@@ -524,7 +554,7 @@
         "headers": {
           "Cookie": "{{session-cookie}}"
         },
-        "body": {}
+        "body": {"link": "https://example.test", "title": "Fixture", "important": true, "reminder": {"date": "2026-10-01T00:00:00.000Z"}, "lang": "en", "broken": false}
       },
       "responses": [
         201,
@@ -630,7 +660,7 @@
         "headers": {
           "Cookie": "{{session-cookie}}"
         },
-        "body": {}
+        "body": {"title": "Fixture", "important": false, "reminder": {"date": null}, "lang": "en", "broken": false, "duplicate": null}
       },
       "responses": [
         200,
@@ -739,7 +769,7 @@
         "headers": {
           "Cookie": "{{session-cookie}}"
         },
-        "body": {}
+        "body": {"items": [{"link": "https://example.test", "title": "Fixture", "important": true, "reminder": {"date": "2026-10-01T00:00:00.000Z"}}]}
       },
       "responses": [
         201,

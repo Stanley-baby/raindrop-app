@@ -278,6 +278,9 @@ const buttonConfigIds = new Set([
     'important', 'tags', 'edit', 'remove'
 ])
 
+const collectionViews = new Set(['list', 'grid', 'simple', 'masonry'])
+const collectionSorts = new Set(['sort', 'title', 'count'])
+
 const isConfigObject = value => value && typeof value === 'object' && !Array.isArray(value)
 
 const parseUserConfig = value => {
@@ -302,14 +305,36 @@ const userConfigPatch = value => {
     return patch
 }
 
+const userGroups = value => {
+    if (!Array.isArray(value) || value.length > 100) return null
+    const groups = value.map((group, index) => {
+        if (!isConfigObject(group)) return null
+        const title = String(group.title || '').trim()
+        const collections = Array.isArray(group.collections)
+            ? [...new Set(group.collections.map(Number).filter(id => Number.isSafeInteger(id) && id > 0))]
+            : []
+        const sort = Number(group.sort)
+        return {
+            _id: typeof group._id === 'string' && /^g[\w-]+$/.test(group._id) ? group._id : 'g' + (index + 1),
+            title,
+            collections,
+            hidden: Boolean(group.hidden),
+            sort: Number.isSafeInteger(sort) ? sort : index
+        }
+    })
+    return groups.every(group => group && group.title && group.title.length <= 200) ? groups : null
+}
+
 const publicUser = user => {
-    const config = parseUserConfig(user.config)
+    const parsedConfig = parseUserConfig(user.config)
+    const { groups, ...config } = parsedConfig
     return {
         _id: String(user.id || user.user_id),
         email: user.email,
         name: user.name,
         email_verified: Boolean(user.email_verified_at),
         ...(Object.keys(config).length ? { config } : {}),
+        ...(Array.isArray(groups) ? { groups } : {}),
         ...(user.google_enabled ? { google: { enabled: true } } : {}),
         ...(user.apple_enabled ? { apple: { enabled: true } } : {}),
         ...(user.tfa_enabled ? { tfa: { enabled: true } } : {})
@@ -329,6 +354,34 @@ const arrayValue = value => {
 const tagValue = value => String(value || '').trim()
 
 const bookmarkTags = value => [...new Set(arrayValue(value).map(tagValue).filter(Boolean))]
+
+const bookmarkDomain = value => {
+    try { return new URL(String(value || '')).hostname.replace(/^www\./i, '') } catch { return '' }
+}
+
+const bookmarkType = item => {
+    const saved = String(item?.type || '').toLowerCase()
+    if (['article', 'image', 'video', 'audio', 'document', 'book'].includes(saved)) return saved
+
+    const url = String(item?.url || item?.link || '')
+    const domain = bookmarkDomain(url)
+    const path = url.split(/[?#]/, 1)[0].toLowerCase()
+    if (/youtube\.com|youtu\.be|vimeo\.com/.test(domain)) return 'video'
+    if (/\.(?:avif|gif|jpe?g|png|svg|webp)$/.test(path) || /(?:pbs\.twimg\.com|images?\.)/.test(domain)) return 'image'
+    if (/\.pdf$/.test(path)) return 'document'
+    if (/\/status\/|\/article(?:s)?\//.test(path)) return 'article'
+    return 'link'
+}
+
+const bookmarkReminder = value => {
+    if (value && typeof value === 'object') return { date: value.date || null }
+    try {
+        const parsed = JSON.parse(value || '{}')
+        return { date: parsed?.date || null }
+    } catch { return { date: null } }
+}
+
+const bookmarkReminderValue = value => JSON.stringify(bookmarkReminder(value))
 
 const validTagList = value => Array.isArray(value) && value.every(tag => tagValue(tag).length <= 100)
 
@@ -506,6 +559,14 @@ const bookmarkItem = item => {
         excerpt: description,
         note: item.note || '',
         cover: item.cover || '',
+        domain: item.domain || bookmarkDomain(item.url),
+        type: bookmarkType(item),
+        important: Boolean(item.important),
+        lang: item.lang || '',
+        broken: Boolean(item.broken),
+        duplicate: item.duplicate ? Number(item.duplicate) : null,
+        reminder: bookmarkReminder(item.reminder),
+        media: item.cover ? [{ link: item.cover, type: 'image' }] : [],
         collectionId: item.removed_at ? -99 : item.collection_id,
         tags: bookmarkTags(item.tags),
         highlights: bookmarkHighlights(item.highlights),
@@ -546,7 +607,8 @@ const requestedPage = url => {
 
 const changedBookmarks = async (env, userId, since) => {
     const rows = await env.DB.prepare(`SELECT b.id, b.user_id, b.url, b.title, b.description, b.note,
-        b.cover, b.collection_id, b.tags, b.highlights, b.removed_at, b.created_at, b.updated_at,
+        b.cover, b.collection_id, b.tags, b.highlights, b.reminder, b.important, b.type,
+        b.lang, b.broken, b.duplicate, b.removed_at, b.created_at, b.updated_at,
         c.version AS sync_version
         FROM bookmark_changes c JOIN bookmarks b ON b.id = c.bookmark_id AND b.user_id = c.user_id
         WHERE c.user_id = ? AND c.version > ? ORDER BY c.version`).bind(userId, since).all()
@@ -2471,6 +2533,9 @@ const collectionItem = item => ({
     title: item.title,
     parentId: item.parent_id,
     count: Number(item.count || 0),
+    view: collectionViews.has(item.view) ? item.view : 'list',
+    expanded: Boolean(item.expanded),
+    sort: Number(item.sort || 0),
     removed: Boolean(item.removed_at),
     public: Boolean(item.is_public),
     slug: item.slug || slugify(item.title) || String(item.id),
@@ -2755,7 +2820,8 @@ const collectionParentAllowed = async (env, userId, collectionId, parentId) => {
 }
 
 const tagItems = async (env, userId, collectionId=0, search='', sort='') => {
-    let query = 'SELECT tags, updated_at FROM bookmarks WHERE user_id = ? AND removed_at IS NULL'
+    const removed = collectionId === -99
+    let query = `SELECT tags, updated_at FROM bookmarks WHERE user_id = ? AND removed_at IS ${removed ? 'NOT NULL' : 'NULL'}`
     const values = [userId]
     if (collectionId === -1) {
         query += ' AND collection_id = -1'
@@ -2786,6 +2852,115 @@ const tagItems = async (env, userId, collectionId=0, search='', sort='') => {
     else items.sort((left, right) => left._id.localeCompare(right._id))
 
     return items.map(({ _id, count }) => ({ _id, count }))
+}
+
+const bookmarkSearchTokens = value => String(value || '').trim().match(/"[^"]*"|\S+/g)?.map(item => item.replace(/^"|"$/g, '')) || []
+
+const bookmarkSearchMatch = (item, value) => {
+    const tokens = bookmarkSearchTokens(value)
+    if (!tokens.length) return true
+    const tags = bookmarkTags(item.tags).map(tag => tag.toLowerCase())
+    const type = bookmarkType(item)
+    const domain = String(item.domain || bookmarkDomain(item.url)).toLowerCase()
+    const text = [item.title, item.url, item.description, item.excerpt, item.note, item.tags, item.highlights]
+        .map(part => String(part || '').toLowerCase()).join('\n')
+
+    return tokens.every(tokenValue => {
+        const excluded = tokenValue.startsWith('-')
+        const token = (excluded ? tokenValue.slice(1) : tokenValue).trim()
+        if (!token) return true
+        let matched
+        if (token.startsWith('#')) matched = tags.includes(token.slice(1).toLowerCase())
+        else if (token === '❤️' || token === 'important:true') matched = Boolean(item.important)
+        else if (token === 'note:true') matched = Boolean(String(item.note || '').trim())
+        else if (token === 'highlights:true') matched = bookmarkHighlights(item.highlights).length > 0
+        else if (token === 'reminder:true') matched = Boolean(bookmarkReminder(item.reminder).date)
+        else if (token === 'notag:true') matched = tags.length === 0
+        else if (token.startsWith('type:')) matched = type === token.slice(5).toLowerCase()
+        else if (token.startsWith('created:')) {
+            const createdAt = Number(item.created_at)
+            const month = Number.isFinite(createdAt)
+                ? new Date(createdAt).toISOString().slice(0, 7)
+                : String(item.created_at || '').slice(0, 7)
+            const value = token.slice(8).trim()
+            matched = Boolean(value) && (month === value || String(item.created_at || '').startsWith(value))
+        }
+        else if (token.startsWith('link:')) {
+            const value = token.slice(5).toLowerCase()
+            matched = value ? String(item.url || '').toLowerCase().includes(value) : Boolean(item.url)
+        }
+        else if (token.startsWith('domain:')) {
+            const value = token.slice(7).toLowerCase()
+            matched = Boolean(value) && domain.includes(value)
+        }
+        else if (token.startsWith('info:')) {
+            const value = token.slice(5).toLowerCase()
+            matched = value
+                ? [item.title, item.description, item.note].some(part => String(part || '').toLowerCase().includes(value))
+                : false
+        }
+        else if (token.startsWith('lang:')) {
+            const value = token.slice(5).toLowerCase()
+            matched = value ? String(item.lang || '').toLowerCase() === value : Boolean(item.lang)
+        }
+        else if (token.startsWith('broken:')) {
+            const value = token.slice(7).toLowerCase()
+            matched = value === 'true' ? Boolean(item.broken) : value === 'false' ? !item.broken : false
+        }
+        else if (token.startsWith('duplicate:')) {
+            const value = token.slice(10).toLowerCase()
+            matched = value === 'true' ? Boolean(item.duplicate) : value ? String(item.duplicate || '') === value : Boolean(item.duplicate)
+        }
+        else matched = text.includes(token.toLowerCase())
+        return excluded ? !matched : matched
+    })
+}
+
+const bookmarkFilterData = async (env, userId, collectionId=0, search='') => {
+    const removed = collectionId === -99
+    let query = `SELECT id, user_id, url, title, description, note, cover, collection_id, tags, highlights,
+        important, type, reminder, lang, broken, duplicate, created_at, updated_at FROM bookmarks WHERE user_id = ? AND removed_at IS ${removed ? 'NOT NULL' : 'NULL'}`
+    const values = [userId]
+    if (collectionId === -1) query += ' AND collection_id = -1'
+    else if (collectionId > 0) {
+        query += ' AND collection_id = ?'
+        values.push(collectionId)
+    }
+    const rows = await env.DB.prepare(query).bind(...values).all()
+    const items = (rows.results || []).filter(item => bookmarkSearchMatch(item, search))
+    const count = predicate => items.filter(predicate).length
+    const counts = new Map()
+    const domains = new Map()
+    const created = new Map()
+    const languages = new Map()
+    for (const item of items) {
+        const type = bookmarkType(item)
+        counts.set(type, (counts.get(type) || 0) + 1)
+        const domain = bookmarkDomain(item.url)
+        if (domain) domains.set(domain, (domains.get(domain) || 0) + 1)
+        const createdAt = Number(item.created_at)
+        const month = Number.isFinite(createdAt)
+            ? new Date(createdAt).toISOString().slice(0, 7)
+            : String(item.created_at || '').slice(0, 7)
+        if (/^\d{4}-\d{2}$/.test(month)) created.set(month, (created.get(month) || 0) + 1)
+        const lang = String(item.lang || '').trim().toLowerCase()
+        if (lang) languages.set(lang, (languages.get(lang) || 0) + 1)
+    }
+    return {
+        types: [...counts.entries()].sort(([left, leftCount], [right, rightCount]) => rightCount - leftCount || left.localeCompare(right)).map(([_id, typeCount]) => ({ _id, count: typeCount })),
+        domains: [...domains.entries()].sort(([left, leftCount], [right, rightCount]) => rightCount - leftCount || left.localeCompare(right)).map(([_id, domainCount]) => ({ _id, count: domainCount })),
+        created: [...created.entries()].sort(([left], [right]) => right.localeCompare(left)).map(([_id, monthCount]) => ({ _id, count: monthCount })),
+        lang: [...languages.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([_id, langCount]) => ({ _id, count: langCount })),
+        total: { count: items.length },
+        notag: { count: count(item => bookmarkTags(item.tags).length === 0) },
+        important: { count: count(item => Boolean(item.important)) },
+        note: { count: count(item => Boolean(String(item.note || '').trim())) },
+        highlights: { count: count(item => bookmarkHighlights(item.highlights).length > 0) },
+        reminder: { count: count(item => Boolean(bookmarkReminder(item.reminder).date)) },
+        broken: { count: count(item => Boolean(item.broken)) },
+        duplicate: { count: count(item => Boolean(item.duplicate)) },
+        collectionId
+    }
 }
 
 const runStatements = async (env, statements) => {
@@ -6346,11 +6521,12 @@ export default {
 
             if (url.pathname === '/v1/user' && request.method === 'PUT') {
                 const { data } = await readBody(request)
-                const patch = userConfigPatch(data.config)
-                if (!patch)
+                const patch = data.config === undefined ? {} : userConfigPatch(data.config)
+                const groups = data.groups === undefined ? undefined : userGroups(data.groups)
+                if (!patch || data.groups !== undefined && !groups)
                     return error('validation_failed', 400, request, env, 'User config must be an object with valid values')
 
-                const config = { ...parseUserConfig(session.config), ...patch }
+                const config = { ...parseUserConfig(session.config), ...patch, ...(groups === undefined ? {} : { groups }) }
                 const serialized = JSON.stringify(config)
                 if (serialized.length > 64 * 1024)
                     return error('validation_failed', 400, request, env, 'User config is too large')
@@ -7049,9 +7225,12 @@ export default {
 
             if (url.pathname === '/v1/collections/all' && request.method === 'GET') {
                 const removed = url.searchParams.get('removed') === 'true'
+                const user = await env.DB.prepare('SELECT config FROM users WHERE id = ?').bind(session.user_id).first()
+                const sort = parseUserConfig(user?.config).raindrops_sort
+                const order = sort === 'title' ? 'LOWER(c.title), c.id' : sort === 'count' ? 'count DESC, LOWER(c.title), c.id' : 'c.sort, c.id'
                 const rows = await env.DB.prepare(`SELECT c.*, COUNT(b.id) AS count
                     FROM collections c LEFT JOIN bookmarks b ON b.collection_id = c.id AND b.removed_at IS NULL
-                    WHERE c.user_id = ? AND c.removed_at IS ${removed ? 'NOT NULL' : 'NULL'} GROUP BY c.id ORDER BY c.id`).bind(session.user_id).all()
+                    WHERE c.user_id = ? AND c.removed_at IS ${removed ? 'NOT NULL' : 'NULL'} GROUP BY c.id ORDER BY ${order}`).bind(session.user_id).all()
                 const items = []
                 const seen = new Set()
                 for (const item of rows.results || [])
@@ -7063,7 +7242,7 @@ export default {
                     const shared = await env.DB.prepare(`SELECT c.*, COUNT(b.id) AS count
                         FROM collections c
                         LEFT JOIN bookmarks b ON b.collection_id = c.id AND b.removed_at IS NULL
-                        WHERE c.user_id != ? AND c.removed_at IS NULL GROUP BY c.id ORDER BY c.id`)
+                        WHERE c.user_id != ? AND c.removed_at IS NULL GROUP BY c.id ORDER BY ${order}`)
                         .bind(session.user_id).all()
                     for (const item of shared.results || []) {
                         if (seen.has(Number(item.id))) continue
@@ -7096,6 +7275,36 @@ export default {
                 return json({ result: true, count: ids.length, ...(await bookmarkSync(env, session.user_id)) }, 200, request, env)
             }
 
+            if (url.pathname === '/v1/collections' && request.method === 'PUT') {
+                const { data } = await readBody(request)
+                const view = data.view === undefined ? null : String(data.view)
+                const expanded = data.expanded === undefined ? null : data.expanded
+                const sort = data.sort === undefined ? null : String(data.sort)
+                if (view !== null && !collectionViews.has(view))
+                    return error('validation_failed', 400, request, env, 'Collection view is invalid')
+                if (expanded !== null && typeof expanded !== 'boolean')
+                    return error('validation_failed', 400, request, env, 'Collection expanded state must be boolean')
+                if (sort !== null && !collectionSorts.has(sort))
+                    return error('validation_failed', 400, request, env, 'Collection sort mode is invalid')
+                const updates = []
+                const values = []
+                if (view !== null) { updates.push('view = ?'); values.push(view) }
+                if (expanded !== null) { updates.push('expanded = ?'); values.push(expanded ? 1 : 0) }
+                if (updates.length) {
+                    updates.push('updated_at = ?')
+                    values.push(Date.now(), session.user_id)
+                    await env.DB.prepare(`UPDATE collections SET ${updates.join(', ')} WHERE user_id = ? AND removed_at IS NULL`).bind(...values).run()
+                }
+                if (sort !== null) {
+                    const user = await env.DB.prepare('SELECT config FROM users WHERE id = ?').bind(session.user_id).first()
+                    const config = { ...parseUserConfig(user?.config), raindrops_sort: sort }
+                    await env.DB.prepare('UPDATE users SET config = ? WHERE id = ?').bind(JSON.stringify(config), session.user_id).run()
+                }
+                if (!updates.length && sort === null)
+                    return error('validation_failed', 400, request, env, 'Provide a Collection display field')
+                return json({ result: true }, 200, request, env)
+            }
+
             if (url.pathname === '/v1/collection' && request.method === 'POST') {
                 const { data } = await readBody(request)
                 const title = String(data.title || '').trim()
@@ -7106,14 +7315,18 @@ export default {
                     return error('collection_not_found', 404, request, env)
                 const now = Date.now()
                 const slug = slugify(data.slug) || slugify(title) || String(now)
-                const inserted = await env.DB.prepare('INSERT INTO collections (user_id, title, parent_id, created_at, updated_at, slug, is_public) VALUES (?, ?, ?, ?, ?, ?, 0)')
-                    .bind(session.user_id, title, parentId || null, now, now, slug).run()
+                const expanded = data.expanded === undefined ? false : data.expanded
+                const sort = data.sort === undefined && data.order === undefined ? 0 : Number(data.sort ?? data.order)
+                if (typeof expanded !== 'boolean' || !Number.isFinite(sort))
+                    return error('validation_failed', 400, request, env, 'Collection display state is invalid')
+                const inserted = await env.DB.prepare('INSERT INTO collections (user_id, title, parent_id, created_at, updated_at, slug, is_public, expanded, sort) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)')
+                    .bind(session.user_id, title, parentId || null, now, now, slug, expanded ? 1 : 0, sort).run()
                 await env.DB.prepare(`INSERT INTO collection_collaborators (collection_id, user_id, role)
                     VALUES (?, ?, 'owner') ON CONFLICT(collection_id, user_id) DO UPDATE SET role = 'owner'`)
                     .bind(inserted.meta.last_row_id, session.user_id).run()
                 await recordAudit(env, request, { userId: session.user_id, action: 'collection.create', resourceType: 'collection', resourceId: inserted.meta.last_row_id, outcome: 'success' })
                 const link = await publicCollectionLink(env, { id: inserted.meta.last_row_id, title, slug })
-                return json({ result: true, item: collectionItem({ id: inserted.meta.last_row_id, title, parent_id: parentId || null, slug, is_public: 0, role: 'owner', public_link: link }) }, 201, request, env)
+                return json({ result: true, item: collectionItem({ id: inserted.meta.last_row_id, title, parent_id: parentId || null, slug, is_public: 0, expanded, sort, role: 'owner', public_link: link }) }, 201, request, env)
             }
 
             const collectionMatch = url.pathname.match(/^\/v1\/collection\/(-?\d+)(?:\/lastAction)?$/)
@@ -7167,6 +7380,15 @@ export default {
                     if (!title || title.length > 200)
                         return error('validation_failed', 400, request, env, 'Enter a collection title under 200 characters')
                     const parentId = data.parentId === undefined ? existing.parent_id : parseCollectionId(data.parentId)
+                    const view = data.view === undefined ? (existing.view || 'list') : String(data.view)
+                    if (!collectionViews.has(view))
+                        return error('validation_failed', 400, request, env, 'Collection view is invalid')
+                    if (data.expanded !== undefined && typeof data.expanded !== 'boolean')
+                        return error('validation_failed', 400, request, env, 'Collection expanded state must be boolean')
+                    const expanded = data.expanded === undefined ? Number(existing.expanded || 0) : (data.expanded ? 1 : 0)
+                    const order = data.sort === undefined && data.order === undefined ? Number(existing.sort || 0) : Number(data.sort ?? data.order)
+                    if (!Number.isFinite(order))
+                        return error('validation_failed', 400, request, env, 'Collection sort order is invalid')
                     if (roleLevel(role) < roleLevel('editor'))
                         return error('permission_denied', 403, request, env, 'Editor access is required to update a Collection')
                     if (Number.isNaN(parentId) || parentId && !await collectionParentAllowed(env, session.user_id, collectionId, parentId) && !await collectionCanWrite(env, session.user_id, parentId))
@@ -7180,11 +7402,15 @@ export default {
                     if (data.slug !== undefined && !nextSlug)
                         return error('validation_failed', 400, request, env, 'Public Link slug must contain letters or numbers')
                     const ownerId = Number(existing.user_id || session.user_id)
-                    await env.DB.prepare('UPDATE collections SET title = ?, parent_id = ?, slug = ?, is_public = ?, updated_at = ? WHERE id = ? AND user_id = ?')
-                        .bind(title, parentId || null, nextSlug, isPublic, Date.now(), collectionId, ownerId).run()
+                    if (data.view === undefined && data.expanded === undefined && data.sort === undefined && data.order === undefined)
+                        await env.DB.prepare('UPDATE collections SET title = ?, parent_id = ?, slug = ?, is_public = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+                            .bind(title, parentId || null, nextSlug, isPublic, Date.now(), collectionId, ownerId).run()
+                    else
+                        await env.DB.prepare('UPDATE collections SET title = ?, parent_id = ?, slug = ?, is_public = ?, view = ?, expanded = ?, sort = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+                            .bind(title, parentId || null, nextSlug, isPublic, view, expanded, order, Date.now(), collectionId, ownerId).run()
                     await recordAudit(env, request, { userId: session.user_id, action: 'collection.update', resourceType: 'collection', resourceId: collectionId, outcome: 'success' })
                     const link = await publicCollectionLink(env, { ...existing, id: collectionId, title, slug: nextSlug, is_public: isPublic })
-                    return json({ result: true, item: collectionItem({ ...existing, title, parent_id: parentId || null, slug: nextSlug, is_public: isPublic, role, public_link: link }) }, 200, request, env)
+                    return json({ result: true, item: collectionItem({ ...existing, title, parent_id: parentId || null, slug: nextSlug, is_public: isPublic, view, expanded, sort: order, role, public_link: link }) }, 200, request, env)
                 }
                 if (request.method === 'DELETE') {
                     if (collectionId === -99) {
@@ -7340,7 +7566,8 @@ export default {
                 if (!page)
                     return error('validation_failed', 400, request, env, 'Page must be non-negative and perpage must be between 1 and 100')
                 const spaceId = Number(listMatch[1])
-                const search = String(url.searchParams.get('search') || '').replace(/^"|"$/g, '')
+                const search = String(url.searchParams.get('search') || '').trim()
+                const structuredSearch = bookmarkSearchTokens(search).some(token => /^(?:#|❤️|important:|note:|highlights:|reminder:|type:|notag:|created:|link:|domain:|info:|lang:|broken:|duplicate:)/i.test(token))
                 let where = 'user_id = ?'
                 const values = [session.user_id]
                 if (spaceId === -99) where += ' AND removed_at IS NOT NULL'
@@ -7359,13 +7586,14 @@ export default {
                         }
                     }
                 }
-                if (search) {
+                if (search && !structuredSearch) {
                     where += ' AND (title LIKE ? OR url LIKE ? OR description LIKE ? OR tags LIKE ? OR note LIKE ? OR highlights LIKE ?)'
                     values.push(...Array(6).fill(`%${search}%`))
                 }
-                const rows = await env.DB.prepare(`SELECT id, user_id, url, title, description, note, cover, collection_id, tags, highlights, removed_at, created_at, updated_at, change_version FROM bookmarks WHERE ${where} ORDER BY updated_at DESC`).bind(...values).all()
+                const rows = await env.DB.prepare(`SELECT id, user_id, url, title, description, note, cover, collection_id, tags, highlights, reminder, important, type, lang, broken, duplicate, removed_at, created_at, updated_at, change_version FROM bookmarks WHERE ${where} ORDER BY updated_at DESC`).bind(...values).all()
                 const marker = await bookmarkSync(env, session.user_id)
-                const allItems = rows.results.map(bookmarkItem)
+                const filtered = structuredSearch ? rows.results.filter(item => bookmarkSearchMatch(item, search)) : rows.results
+                const allItems = filtered.map(bookmarkItem)
                 const start = page.page * page.perpage
                 return json({ result: true, items: allItems.slice(start, start + page.perpage), count: allItems.length, page: page.page, perpage: page.perpage, ...marker }, 200, request, env)
             }
@@ -7395,6 +7623,13 @@ export default {
                     const description = String(input.description ?? input.excerpt ?? '').trim()
                     const note = String(input.note || '').trim()
                     const highlights = input.highlights === undefined ? [] : input.highlights
+                    const lang = String(input.lang || '').trim()
+                    if (input.important !== undefined && typeof input.important !== 'boolean')
+                        return error('validation_failed', 400, request, env, 'Bookmark favorite state must be boolean')
+                    if (input.reminder !== undefined && input.reminder !== null && typeof input.reminder !== 'object' && typeof input.reminder !== 'string')
+                        return error('validation_failed', 400, request, env, 'Bookmark reminder is invalid')
+                    if (lang.length > 35 || (input.broken !== undefined && typeof input.broken !== 'boolean') || (input.duplicate !== undefined && input.duplicate !== null && (!Number.isSafeInteger(Number(input.duplicate)) || Number(input.duplicate) <= 0)))
+                        return error('validation_failed', 400, request, env, 'Bookmark status is invalid')
                     if (description.length > 10000 || note.length > 10000 || !validHighlightChanges(highlights))
                         return error('validation_failed', 400, request, env, 'Bookmark metadata is invalid')
                     const now = Date.now()
@@ -7402,11 +7637,11 @@ export default {
                     if (!Number.isSafeInteger(collectionId) || collectionId < -1 || !await collectionOwned(env, session.user_id, collectionId))
                         return error('collection_not_found', 404, request, env)
                     const tags = bookmarkTags(input.tags)
-                    const inserted = await env.DB.prepare('INSERT INTO bookmarks (user_id, url, title, description, note, highlights, created_at, updated_at, collection_id, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-                        .bind(session.user_id, link, title, description, note, JSON.stringify(applyHighlightChanges('[]', highlights)), now, now, collectionId, JSON.stringify(tags)).run()
+                    const inserted = await env.DB.prepare('INSERT INTO bookmarks (user_id, url, title, description, note, highlights, reminder, important, lang, broken, duplicate, created_at, updated_at, collection_id, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+                        .bind(session.user_id, link, title, description, note, JSON.stringify(applyHighlightChanges('[]', highlights)), bookmarkReminderValue(input.reminder), input.important ? 1 : 0, lang, input.broken ? 1 : 0, input.duplicate === undefined || input.duplicate === null ? null : Number(input.duplicate), now, now, collectionId, JSON.stringify(tags)).run()
                     const item = await env.DB.prepare('SELECT * FROM bookmarks WHERE id = ? AND user_id = ?')
                         .bind(inserted.meta.last_row_id, session.user_id).first()
-                    items.push(bookmarkItem(item || { id: inserted.meta.last_row_id, url: link, title, description, note, highlights: JSON.stringify(highlights), created_at: now, updated_at: now, collection_id: collectionId, tags: JSON.stringify(tags), removed_at: null }))
+                    items.push(bookmarkItem(item || { id: inserted.meta.last_row_id, url: link, title, description, note, highlights: JSON.stringify(highlights), reminder: bookmarkReminderValue(input.reminder), important: input.important, lang: input.lang, broken: input.broken, duplicate: input.duplicate, created_at: now, updated_at: now, collection_id: collectionId, tags: JSON.stringify(tags), removed_at: null }))
                     const task = await createMetadataTask(env, request, session.user_id, inserted.meta.last_row_id, link)
                     if (task) tasks.push(publicTask(task))
                     await recordAudit(env, request, { userId: session.user_id, action: 'bookmark.create_bulk', resourceType: 'bookmark', resourceId: inserted.meta.last_row_id, outcome: 'success' })
@@ -7426,6 +7661,13 @@ export default {
                 const description = String(data.description ?? data.excerpt ?? '').trim()
                 const note = String(data.note || '').trim()
                 const highlights = data.highlights === undefined ? [] : data.highlights
+                const lang = String(data.lang || '').trim()
+                if (data.important !== undefined && typeof data.important !== 'boolean')
+                    return error('validation_failed', 400, request, env, 'Bookmark favorite state must be boolean')
+                if (data.reminder !== undefined && data.reminder !== null && typeof data.reminder !== 'object' && typeof data.reminder !== 'string')
+                    return error('validation_failed', 400, request, env, 'Bookmark reminder is invalid')
+                if (lang.length > 35 || (data.broken !== undefined && typeof data.broken !== 'boolean') || (data.duplicate !== undefined && data.duplicate !== null && (!Number.isSafeInteger(Number(data.duplicate)) || Number(data.duplicate) <= 0)))
+                    return error('validation_failed', 400, request, env, 'Bookmark status is invalid')
                 if (description.length > 10000 || note.length > 10000 || !validHighlightChanges(highlights))
                     return error('validation_failed', 400, request, env, 'Bookmark metadata is invalid')
 
@@ -7434,15 +7676,15 @@ export default {
                 if (!Number.isSafeInteger(collectionId) || collectionId < -1 || collectionId > 0 && !await collectionOwned(env, session.user_id, collectionId) && !await collectionCanWrite(env, session.user_id, collectionId))
                     return error('collection_not_found', 404, request, env)
                 const tags = bookmarkTags(data.tags)
-                const inserted = await env.DB.prepare('INSERT INTO bookmarks (user_id, url, title, description, note, highlights, created_at, updated_at, collection_id, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-                    .bind(session.user_id, bookmarkUrl, title, description, note, JSON.stringify(applyHighlightChanges('[]', highlights)), now, now, collectionId, JSON.stringify(tags)).run()
+                const inserted = await env.DB.prepare('INSERT INTO bookmarks (user_id, url, title, description, note, highlights, reminder, important, lang, broken, duplicate, created_at, updated_at, collection_id, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+                    .bind(session.user_id, bookmarkUrl, title, description, note, JSON.stringify(applyHighlightChanges('[]', highlights)), bookmarkReminderValue(data.reminder), data.important ? 1 : 0, lang, data.broken ? 1 : 0, data.duplicate === undefined || data.duplicate === null ? null : Number(data.duplicate), now, now, collectionId, JSON.stringify(tags)).run()
                 const item = await env.DB.prepare('SELECT * FROM bookmarks WHERE id = ? AND user_id = ?')
                     .bind(inserted.meta.last_row_id, session.user_id).first()
                 const task = await createMetadataTask(env, request, session.user_id, inserted.meta.last_row_id, bookmarkUrl)
                 await recordAudit(env, request, { userId: session.user_id, action: 'bookmark.create', resourceType: 'bookmark', resourceId: inserted.meta.last_row_id, outcome: 'success' })
                 return json({
                     result: true,
-                    item: bookmarkItem(item || { id: inserted.meta.last_row_id, url: bookmarkUrl, title, description, note, highlights: JSON.stringify(highlights), created_at: now, updated_at: now, collection_id: collectionId, tags: JSON.stringify(tags), removed_at: null }),
+                    item: bookmarkItem(item || { id: inserted.meta.last_row_id, url: bookmarkUrl, title, description, note, highlights: JSON.stringify(highlights), reminder: bookmarkReminderValue(data.reminder), important: data.important, lang: data.lang, broken: data.broken, duplicate: data.duplicate, created_at: now, updated_at: now, collection_id: collectionId, tags: JSON.stringify(tags), removed_at: null }),
                     ...(task ? { task: publicTask(task), taskId: String(task.id) } : {}),
                     ...(await bookmarkSync(env, session.user_id))
                 }, 201, request, env)
@@ -7484,10 +7726,23 @@ export default {
                     const note = data.note === undefined ? existing.note || '' : String(data.note).trim()
                     const cover = data.cover === undefined ? existing.cover || '' : String(data.cover).trim()
                     const tags = data.tags === undefined ? bookmarkTags(existing.tags) : bookmarkTags(data.tags)
+                    if (data.important !== undefined && typeof data.important !== 'boolean')
+                        return error('validation_failed', 400, request, env, 'Bookmark favorite state must be boolean')
+                    if (data.reminder !== undefined && data.reminder !== null && typeof data.reminder !== 'object' && typeof data.reminder !== 'string')
+                        return error('validation_failed', 400, request, env, 'Bookmark reminder is invalid')
+                    if (data.broken !== undefined && typeof data.broken !== 'boolean' || data.duplicate !== undefined && data.duplicate !== null && (!Number.isSafeInteger(Number(data.duplicate)) || Number(data.duplicate) <= 0))
+                        return error('validation_failed', 400, request, env, 'Bookmark status is invalid')
                     let collectionId = data.collectionId === undefined ? existing.collection_id : parseBookmarkCollectionId(data.collectionId)
                     const removedAt = data.removed === false ? null : existing.removed_at
                     const removedBatch = data.removed === false ? null : existing.removed_batch
                     const highlights = data.highlights === undefined ? bookmarkHighlights(existing.highlights) : data.highlights
+                    const reminder = data.reminder === undefined ? bookmarkReminderValue(existing.reminder) : bookmarkReminderValue(data.reminder)
+                    const important = data.important === undefined ? Number(existing.important || 0) : (data.important ? 1 : 0)
+                    const lang = data.lang === undefined ? String(existing.lang || '') : String(data.lang || '').trim()
+                    const broken = data.broken === undefined ? Number(existing.broken || 0) : (data.broken ? 1 : 0)
+                    const duplicate = data.duplicate === undefined ? (existing.duplicate || null) : data.duplicate === null ? null : Number(data.duplicate)
+                    if (lang.length > 35)
+                        return error('validation_failed', 400, request, env, 'Bookmark language is invalid')
                     if (data.collectionId === undefined && data.removed === false && collectionId > 0 && !await collectionOwned(env, session.user_id, collectionId) && !await collectionCanWrite(env, session.user_id, collectionId))
                         collectionId = -1
                     const urlCheck = validateFetchableUrl(link)
@@ -7499,8 +7754,8 @@ export default {
                         return error('collection_not_found', 404, request, env)
                     if (!validHighlightChanges(highlights))
                         return error('validation_failed', 400, request, env, 'Highlight text and note must be valid')
-                    await env.DB.prepare('UPDATE bookmarks SET url = ?, title = ?, description = ?, note = ?, cover = ?, collection_id = ?, tags = ?, highlights = ?, removed_at = ?, removed_batch = ?, updated_at = ? WHERE id = ? AND user_id = ?')
-                        .bind(link, title, description, note, cover, collectionId, JSON.stringify(tags), JSON.stringify(applyHighlightChanges(existing.highlights, highlights)), removedAt, removedBatch, Date.now(), bookmarkId, existing.user_id).run()
+                    await env.DB.prepare('UPDATE bookmarks SET url = ?, title = ?, description = ?, note = ?, cover = ?, collection_id = ?, tags = ?, highlights = ?, reminder = ?, important = ?, lang = ?, broken = ?, duplicate = ?, removed_at = ?, removed_batch = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+                        .bind(link, title, description, note, cover, collectionId, JSON.stringify(tags), JSON.stringify(applyHighlightChanges(existing.highlights, highlights)), reminder, important, lang, broken, duplicate, removedAt, removedBatch, Date.now(), bookmarkId, existing.user_id).run()
                     const item = await env.DB.prepare('SELECT * FROM bookmarks WHERE id = ? AND user_id = ?').bind(bookmarkId, existing.user_id).first()
                     const task = link !== existing.url
                         ? await createMetadataTask(env, request, session.user_id, bookmarkId, link)
@@ -7562,7 +7817,8 @@ export default {
                 if (collectionId > 0 && !await collectionOwned(env, session.user_id, collectionId))
                     return error('collection_not_found', 404, request, env)
                 const tags = await tagItems(env, session.user_id, collectionId, url.searchParams.get('search'), url.searchParams.get('tagsSort'))
-                return json({ result: true, items: [], tags }, 200, request, env)
+                const filters = await bookmarkFilterData(env, session.user_id, collectionId, url.searchParams.get('search'))
+                return json({ result: true, items: [], tags, ...filters }, 200, request, env)
             }
 
             if (url.pathname === '/v1/user/send_email_confirm' && request.method === 'POST') {

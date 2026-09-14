@@ -80,11 +80,11 @@ export default function(state, action) {switch (action.type) {
 	}
 
 	case SPACE_LOAD_REQ:{
-		const { spaceId, query, lastAction, version } = action
+		const { spaceId, query, lastAction, version, force } = action
 		const oldSpace = state.spaces[spaceId]
 
 		//ignore when nothing changed (including data, query)
-		if (oldSpace && 
+		if (!force && oldSpace &&
 			oldSpace.lastAction == lastAction && 
 			oldSpace.version == version){
 			action.ignore = true

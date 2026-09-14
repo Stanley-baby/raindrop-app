@@ -57,7 +57,7 @@ class ContentDatabase {
                 const upload = sql.includes('VALUES (?, ?, ?, ?, ?, \'[]\'')
                 const item = {
                     id: this.nextBookmarkId++, user_id: values[0], url: values[1], title: values[2], description: values[3], note: values[4], cover: '',
-                    highlights: upload ? '[]' : values[5], created_at: upload ? values[5] : values[6], updated_at: upload ? values[6] : values[7], collection_id: upload ? values[7] : values[8], tags: upload ? values[8] : values[9], removed_at: null
+                    highlights: upload ? '[]' : values[5], reminder: upload ? '{}': values[6], important: upload ? 0 : Number(values[7] || 0), lang: upload ? '' : values[8] || '', broken: upload ? 0 : Number(values[9] || 0), duplicate: upload ? null : values[10] || null, created_at: upload ? values[5] : values[11], updated_at: upload ? values[6] : values[12], collection_id: upload ? values[7] : values[13], tags: upload ? values[8] : values[14], removed_at: null
                 }
                 this.bookmarks.push(item)
                 return { meta: { last_row_id: item.id, changes: 1 } }

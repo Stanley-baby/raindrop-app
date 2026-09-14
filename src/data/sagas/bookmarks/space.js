@@ -40,6 +40,7 @@ function* preLoadSpace(action) {
 		yield put({
 			...action,
 			type: SPACE_LOAD_REQ,
+			force: Boolean(action.query && action.query.search),
 			lastAction,
 			version
 		})

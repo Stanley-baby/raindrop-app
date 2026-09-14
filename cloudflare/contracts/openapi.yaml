@@ -252,6 +252,35 @@ paths:
           description: A Collection is not owned by this User.
         '500':
           $ref: '#/components/responses/InternalError'
+    put:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [collections:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                view:
+                  type: string
+                  enum: [list, grid, simple, masonry]
+                expanded:
+                  type: boolean
+                sort:
+                  type: string
+                  enum: [sort, title, count]
+      responses:
+        '200':
+          description: View mode applied to all active Collections.
+        '400':
+          description: Invalid Collection view mode.
+        '401':
+          description: Login required.
+        '500':
+          $ref: '#/components/responses/InternalError'
   /v1/collections/clean:
     put:
       security:
@@ -289,6 +318,12 @@ paths:
                     - type: string
                       enum: [root]
                   nullable: true
+                expanded:
+                  type: boolean
+                sort:
+                  type: number
+                order:
+                  type: number
       responses:
         '201':
           description: Nested or root Collection created for the signed-in User.
@@ -343,6 +378,15 @@ paths:
                     - type: string
                       enum: [root]
                   nullable: true
+                view:
+                  type: string
+                  enum: [list, grid, simple, masonry]
+                expanded:
+                  type: boolean
+                sort:
+                  type: number
+                order:
+                  type: number
                 removed:
                   type: boolean
       responses:
@@ -536,6 +580,23 @@ paths:
                   type: array
                   items:
                     type: object
+                important:
+                  type: boolean
+                reminder:
+                  type: object
+                  properties:
+                    date:
+                      type: string
+                      format: date-time
+                      nullable: true
+                lang:
+                  type: string
+                  maxLength: 35
+                broken:
+                  type: boolean
+                duplicate:
+                  type: integer
+                  minimum: 1
       responses:
         '201':
           description: Basic Bookmark created for the signed-in User.
@@ -671,6 +732,23 @@ paths:
                         type: string
                         enum: [yellow, blue, green, red]
                       position: {}
+                important:
+                  type: boolean
+                reminder:
+                  type: object
+                  properties:
+                    date:
+                      type: string
+                      format: date-time
+                      nullable: true
+                lang:
+                  type: string
+                  maxLength: 35
+                broken:
+                  type: boolean
+                duplicate:
+                  type: integer
+                  minimum: 1
                 removed:
                   type: boolean
       responses:
@@ -788,6 +866,23 @@ paths:
                         type: array
                         items:
                           type: object
+                      important:
+                        type: boolean
+                      reminder:
+                        type: object
+                        properties:
+                          date:
+                            type: string
+                            format: date-time
+                            nullable: true
+                      lang:
+                        type: string
+                        maxLength: 35
+                      broken:
+                        type: boolean
+                      duplicate:
+                        type: integer
+                        minimum: 1
       responses:
         '201':
           description: Multiple Bookmarks created with one Change Version per item.
@@ -1205,7 +1300,6 @@ paths:
           application/json:
             schema:
               type: object
-              required: [config]
               properties:
                 config:
                   type: object
@@ -1218,6 +1312,27 @@ paths:
                       items:
                         type: string
                         enum: [select, current_tab, new_tab, preview, web, copy, ask, important, tags, edit, remove]
+                groups:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [title, collections]
+                    properties:
+                      _id:
+                        type: string
+                      title:
+                        type: string
+                        maxLength: 200
+                      collections:
+                        type: array
+                        items:
+                          type: integer
+                          minimum: 1
+                      hidden:
+                        type: boolean
+                      sort:
+                        type: integer
       responses:
         '200':
           description: Authenticated User with the merged configuration.

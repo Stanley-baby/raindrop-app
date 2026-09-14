@@ -13,6 +13,7 @@ export default class SearchForm extends React.Component {
         downshift: PropTypes.shape({
             getComboboxProps: PropTypes.func
         }),
+        suggestions: PropTypes.array,
         onSubmit: PropTypes.func
     }
 
@@ -38,11 +39,6 @@ export default class SearchForm extends React.Component {
 
     onFormSubmit = (e)=>{
         e.preventDefault()
-
-        const { suggestions } = this.props
-        if (suggestions.length)
-            return
-
         this.submit()
     }
 
@@ -52,7 +48,7 @@ export default class SearchForm extends React.Component {
     }
 
     componentDidUpdate(prevProps) {
-        const { value, originalValue, suggestions } = this.props
+        const { value, originalValue, suggestions=[] } = this.props
 
         if (prevProps.value == value || 
             (originalValue.trim()||'') == (value||'').trim())
