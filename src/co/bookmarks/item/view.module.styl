@@ -182,6 +182,11 @@
     grid-gap: var(--padding-medium)
     padding: var(--padding-medium)
 
+    .title, .excerpt, .body {
+        line-clamp: 3
+        -webkit-line-clamp: 3
+    }
+
     &:before {
         content: ''
         position: absolute
