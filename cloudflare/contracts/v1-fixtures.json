@@ -228,6 +228,30 @@
       }
     },
     {
+      "method": "GET",
+      "path": "/v1/collections/covers/:query",
+      "request": {
+        "method": "GET",
+        "path": "/v1/collections/covers/:query",
+        "headers": {
+          "Cookie": "{{session-cookie}}"
+        }
+      },
+      "responses": [
+        200,
+        401,
+        500
+      ],
+      "cases": {
+        "success": 200,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
       "method": "DELETE",
       "path": "/v1/collections",
       "request": {

@@ -2,8 +2,11 @@ import { call, put, takeEvery, select, all } from 'redux-saga/effects'
 import _ from 'lodash-es'
 import Api from '../../modules/api'
 import ApiError from '../../modules/error'
+import captureScreenshot from '../../modules/captureScreenshot'
 
 import { getUrl } from '../../helpers/bookmarks'
+import { getBookmark, getBookmarkScreenshotIndex, getMeta } from '../../helpers/bookmarks'
+import { independentService } from '~config/environment'
 
 import {
 	SELECT_MODE_IMPORTANT_SELECTED,
@@ -35,9 +38,9 @@ export default function* () {
 	//Make screenshots
 	yield takeEvery(
 		SELECT_MODE_SCREENSHOT_SELECTED,
-		updateBookmarks({
+		independentService ? screenshotSelected : updateBookmarks({
 			set: ()=>({
-				media: [{link: '<screenshot>'}]
+				media: [{link: '<screenshot>', screenshot: true}]
 			}),
 			mutate: (action, item)=>({
 				...item,
@@ -156,6 +159,40 @@ const updateBookmarks = ({validate, set, mutate}) => (
 	}
 )
 
+function* screenshotSelected({ onSuccess, onFail }) {
+	try {
+		const state = yield select()
+		const groups = selectedBookmarkGroups(state.bookmarks)
+		const items = []
+
+		for (const [collectionId, ids] of groups) {
+			const selectedIds = state.bookmarks.selectMode.all
+				? state.bookmarks.spaces[collectionId].ids
+				: ids
+			for (const _id of selectedIds) {
+				const item = getBookmark(state.bookmarks, _id)
+				const meta = getMeta(state.bookmarks, _id)
+				const screenshotIndex = getBookmarkScreenshotIndex(state.bookmarks, _id)
+				if (screenshotIndex !== -1)
+					items.push({ ...item, cover: meta.media[screenshotIndex].link })
+				else
+					items.push(yield call(captureScreenshot, item._id))
+			}
+		}
+
+		if (items.length)
+			yield all([
+				put({ type: SELECT_MODE_DISABLE }),
+				put({ type: BOOKMARK_UPDATE_SUCCESS, item: items })
+			])
+
+		if (typeof onSuccess === 'function') onSuccess()
+	} catch (error) {
+		if (typeof onFail === 'function') onFail(error)
+		yield put({ type: SELECT_MODE_FAIL_SELECTED, error })
+	}
+}
+
 function* removeBookmarks({onSuccess, onFail}) {
 	try{
 		const removed = yield batchApiRequestHelper('del')
@@ -190,29 +227,7 @@ function* batchApiRequestHelper(method, body={}) {
 	const state = yield select()
 	const { bookmarks } = state
 	const { selectMode } = bookmarks
-
-	//fail when nothing selected
-	if (!selectMode.all && !selectMode.ids.length)
-		throw new ApiError({ status: 400, error: 'ids', errorMessage: 'nothing selected'})
-
-	//operations should be splited by collections
-	let groupByCollection = []
-
-	//all bookmarks
-	if (parseInt(selectMode.spaceId)==0 || selectMode.all)
-		groupByCollection = [
-			[selectMode.spaceId, selectMode.ids]
-		]
-	//per collection
-	else
-		groupByCollection = _.toPairs(
-			_.groupBy(
-				_.pick(bookmarks.elements, selectMode.ids),
-				'collectionId'
-			)
-		).map(([cid, items])=>
-			[ cid, items.map(({_id})=>_id) ]
-		)
+	const groupByCollection = selectedBookmarkGroups(bookmarks)
 
 	let changed = []
 
@@ -234,4 +249,20 @@ function* batchApiRequestHelper(method, body={}) {
 	}
 
 	return changed
+}
+
+const selectedBookmarkGroups = bookmarks => {
+	const { selectMode } = bookmarks
+	if (!selectMode.all && !selectMode.ids.length)
+		throw new ApiError({ status: 400, error: 'ids', errorMessage: 'nothing selected'})
+
+	if (parseInt(selectMode.spaceId) == 0 || selectMode.all)
+		return [[selectMode.spaceId, selectMode.ids]]
+
+	return _.toPairs(
+		_.groupBy(
+			_.pick(bookmarks.elements, selectMode.ids),
+			'collectionId'
+		)
+	).map(([cid, items])=>[cid, items.map(({_id})=>_id)])
 }

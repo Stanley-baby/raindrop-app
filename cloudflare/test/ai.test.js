@@ -123,9 +123,9 @@ class AiDatabase {
                 return { meta: { changes: row ? 1 : 0 } }
             }
             if (sql.includes('UPDATE bookmarks SET url = ?')) {
-                const row = this.bookmarks.find(item => item.id === values[10] && item.user_id === values[11])
+                const row = this.bookmarks.find(item => item.id === values[12] && item.user_id === values[13])
                 if (row) {
-                    Object.assign(row, { url: values[0], title: values[1], description: values[2], note: values[3], collection_id: values[4], tags: values[5], highlights: values[6], removed_at: values[7], removed_batch: values[8], updated_at: values[9] })
+                    Object.assign(row, { url: values[0], title: values[1], description: values[2], note: values[3], cover: values[4], media: values[5], collection_id: values[6], tags: values[7], highlights: values[8], removed_at: values[9], removed_batch: values[10], updated_at: values[11] })
                 }
                 return { meta: { changes: row ? 1 : 0 } }
             }

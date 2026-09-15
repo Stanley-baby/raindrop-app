@@ -24,6 +24,7 @@ import {
 
 import { isPro } from '../../selectors/user'
 import { independentService } from '~config/environment'
+import captureScreenshot from '../../modules/captureScreenshot'
 
 //Requests
 export default function* () {
@@ -282,13 +283,35 @@ function* screenshot({_id, ignore=false, onSuccess, onFail}) {
 		const meta = getMeta(state.bookmarks, _id)
 		const screenshotIndex = getBookmarkScreenshotIndex(state.bookmarks, _id)
 
+		if (independentService && screenshotIndex !== -1) {
+			yield put({
+				type: BOOKMARK_UPDATE_SUCCESS,
+				item: {
+					...item,
+					cover: meta.media[screenshotIndex].link
+				},
+				onSuccess, onFail
+			})
+			return
+		}
+
+		if (independentService) {
+			const captured = yield call(captureScreenshot, item._id)
+			yield put({
+				type: BOOKMARK_UPDATE_SUCCESS,
+				item: captured,
+				onSuccess, onFail
+			})
+			return
+		}
+
 		var setReq = {}
 		if (screenshotIndex!=-1){
 			setReq = {
 				cover: '<screenshot>'
 			}
 		}else{
-			const newMedia = meta.media.concat([{link: '<screenshot>'}])
+			const newMedia = meta.media.concat([{link: '<screenshot>', screenshot: true}])
 			setReq = {
 				media: newMedia,
 				cover: '<screenshot>'

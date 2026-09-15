@@ -329,10 +329,11 @@ function* uploadCover({ _id=0, cover, ignore=false, onSuccess, onFail }) {
 	if (ignore) return
 
 	try{
-		const { item={} } = yield call(Api.upload, `collection/${_id}/cover`, { cover }, { timeout: 0 })
+		const coverData = yield call(fileToDataUrl, cover)
+		const { item={} } = yield call(Api.put, `collection/${_id}`, { cover: [coverData] })
 
 		yield put({
-			type: COLLECTION_UPDATE_REQ,
+			type: COLLECTION_UPDATE_SUCCESS,
 			_id,
 			item: item,
 			onSuccess, onFail
@@ -346,6 +347,15 @@ function* uploadCover({ _id=0, cover, ignore=false, onSuccess, onFail }) {
 		});
 	}
 }
+
+const fileToDataUrl = file => new Promise((resolve, reject)=>{
+	if (!file || !/^image\/(?:png|jpeg|gif|webp)$/.test(file.type || '') || file.size > 256 * 1024)
+		return reject(new Error('Use a PNG, JPEG, GIF, or WebP image up to 256 KiB'))
+	const reader = new FileReader()
+	reader.onload = ()=>resolve(reader.result)
+	reader.onerror = ()=>reject(new Error('The collection icon could not be read'))
+	reader.readAsDataURL(file)
+})
 
 function* toggleCollection({_id=0, expanded, ignore=false}) {
 	if ((ignore)||(_id<=0))

@@ -56,6 +56,12 @@
             "responses": [200, 401, 500]
         },
         {
+            "method": "GET",
+            "path": "/v1/collections/covers/:query",
+            "authentication": "required",
+            "responses": [200, 401, 500]
+        },
+        {
             "method": "DELETE",
             "path": "/v1/collections",
             "authentication": "required",

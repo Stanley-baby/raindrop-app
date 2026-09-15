@@ -88,12 +88,13 @@ test('OpenAPI v1 paths and methods stay in lockstep with the route manifest', ()
     }
 })
 
-const materializePath = (path, { collectionId = '0', contentId = 'fixture-content', userId = '2', id = 'fixture-id', slug = 'fixture-slug' } = {}) => path
+const materializePath = (path, { collectionId = '0', contentId = 'fixture-content', userId = '2', id = 'fixture-id', slug = 'fixture-slug', query = 'all' } = {}) => path
     .replaceAll(':collectionId', collectionId)
     .replaceAll(':contentId', contentId)
     .replaceAll(':userId', userId)
     .replaceAll(':id', id)
     .replaceAll(':slug', slug)
+    .replaceAll(':query', query)
 
 const fixtureRequest = (item, { query = item.request.query, body = item.request.body, cookie = true, collectionId = '0', id = 'fixture-id', contentId = 'fixture-content' } = {}) => {
     const params = new URLSearchParams(query || {})
