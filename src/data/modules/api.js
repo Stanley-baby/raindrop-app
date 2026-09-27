@@ -7,6 +7,7 @@ import {
 	API_TIMEOUT
 } from '../constants/app'
 import ApiError from './error'
+import { initializeRuntimeDomain } from '~target'
 
 function* get(url, overrideOptions={}) {
 	const { retries=API_RETRIES, ...options } = overrideOptions
@@ -102,6 +103,10 @@ function* del(url, data={}, options={}) {
 }
 
 function* req(url, options={}, retries=0) {
+	yield call(initializeRuntimeDomain)
+	if (process.env.RUNTIME_DOMAIN_MODE === 'true' && process.env.APP_TARGET === 'extension' && !API_ENDPOINT_URL)
+		throw new ApiError({ status: 503, errorMessage: 'extension_runtime_domain_missing' })
+
 	var finalURL = API_ENDPOINT_URL + url
 
 	if (url.indexOf('/') == 0)

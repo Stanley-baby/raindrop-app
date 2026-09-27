@@ -7,9 +7,9 @@ function file({ emitFile }, filename) {
 	return name
 }
 
-module.exports = ({ vendor, production=false, environment='production', apiOrigin='https://api.example.com', appOrigin='https://app.example.com' }, l) => {
+module.exports = ({ vendor, production=false, environment='production', runtimeDomainMode=false, apiOrigin='https://api.example.com', appOrigin='https://app.example.com' }, l) => {
 	const { version } = JSON.parse(fs.readFileSync(`${__dirname}/../../../../package.json`, 'utf-8'))
-	const apiHostPermission = `${new URL(apiOrigin).origin}/*`
+	const apiHostPermission = apiOrigin ? `${new URL(apiOrigin).origin}/*` : null
 
 	//locales generation
 	locales(l)
@@ -24,9 +24,15 @@ module.exports = ({ vendor, production=false, environment='production', apiOrigi
 			version_name:	version,
 		} : {}),
 
-		name:			environment == 'selfhosted' ? 'Raindrop.io (Cloudflare)' : 'Raindrop.io'+(!production?' (Dev)':''),
+		name:			environment == 'production' ? 'Raindrop.io (Production)' : environment == 'selfhosted' ? 'Raindrop.io (Self-hosted)' : 'Raindrop.io'+(!production?' (Dev)':''),
 		description:	'__MSG_appDesc__',
-		homepage_url:	appOrigin,
+		...(appOrigin ? { homepage_url: appOrigin } : {}),
+		...(runtimeDomainMode ? {
+			options_ui: {
+				page: 'welcome/settings.html',
+				open_in_tab: true
+			}
+		} : {}),
 		author:			'Mussabekov Rustem',
 		short_name:		'Raindrop.io',
 		default_locale:	'en',
@@ -101,7 +107,7 @@ module.exports = ({ vendor, production=false, environment='production', apiOrigi
 		],
 
 		host_permissions: [
-			apiHostPermission,
+			...(apiHostPermission ? [apiHostPermission] : []),
 
 			//fix firefox cookie protection
 		],

@@ -44,7 +44,7 @@
 
 	<!-- performance -->
 	<%if (process.env.NODE_ENV == 'production') { %>
-		<link rel="preconnect" href="<%= apiOrigin %>" >
+		<%if (apiOrigin) { %><link rel="preconnect" href="<%= apiOrigin %>" ><% } %>
 		<%if (!independentService) { %><link rel="preconnect" href="https://rdl.ink"><% } %>
 	<% } %>
 </head>

@@ -6,7 +6,7 @@ async function onInstalled({ reason }) {
         case 'install':
             if (!environment.includes('safari'))
                 await browser.tabs.create({
-                    url: '/welcome/index.html',
+                    url: process.env.RUNTIME_DOMAIN_MODE === 'true' ? '/welcome/settings.html' : '/welcome/index.html',
                     active: true
                 })
             break

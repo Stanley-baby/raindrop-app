@@ -1,5 +1,6 @@
-import { call, put, takeLatest, all } from 'redux-saga/effects'
+import { call, put, takeLatest } from 'redux-saga/effects'
 import Api from '../modules/api'
+import dedupeGet from '../modules/dedupeGet'
 import ApiError from '../modules/error'
 import {
 	USER_LOAD_REQ, USER_LOAD_SUCCESS, USER_LOAD_ERROR,
@@ -65,7 +66,7 @@ function* loadUser({ignore=false, reset=true, way, onSuccess, onFail}) {
 		if (reset)
 			yield put({type: 'RESET'})
 		
-		const { user } = yield call(Api.get, 'user');
+		const { user } = yield call(dedupeGet, 'user');
 
 		yield put({type: USER_LOAD_SUCCESS, user, way, onSuccess})
 	} catch (error) {
@@ -279,7 +280,7 @@ function* sendEmailConfirm({ ignore=false, onSuccess, onFail }) {
 		return;
 
 	try {
-		yield call(Api.post, `user/send_email_confirm`)
+		yield call(Api.post, 'user/send_email_confirm')
 		onSuccess()
 	} catch (error) {
 		onFail(error)

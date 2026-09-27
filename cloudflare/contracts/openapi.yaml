@@ -221,6 +221,24 @@ paths:
           description: Login required.
         '500':
           $ref: '#/components/responses/InternalError'
+  /v1/collections/covers/{query}:
+    get:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [collections:read]
+      parameters:
+        - in: path
+          name: query
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Offline built-in Collection icon templates filtered by the query.
+        '401':
+          description: Login required.
+        '500':
+          $ref: '#/components/responses/InternalError'
   /v1/collections:
     delete:
       security:
@@ -324,6 +342,10 @@ paths:
                   type: number
                 order:
                   type: number
+                cover:
+                  type: array
+                  maxItems: 5
+                  items: {type: string, maxLength: 350000}
       responses:
         '201':
           description: Nested or root Collection created for the signed-in User.
@@ -389,6 +411,10 @@ paths:
                   type: number
                 removed:
                   type: boolean
+                cover:
+                  type: array
+                  maxItems: 5
+                  items: {type: string, maxLength: 350000}
       responses:
         '200':
           description: Collection title or parent updated.
@@ -568,6 +594,19 @@ paths:
                 note:
                   type: string
                   maxLength: 10000
+                cover:
+                  type: string
+                  maxLength: 2000
+                media:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [link]
+                    properties:
+                      link: {type: string, maxLength: 2000}
+                      type: {type: string, maxLength: 32}
+                      screenshot: {type: boolean}
                 collectionId:
                   type: integer
                   minimum: -1
@@ -594,6 +633,7 @@ paths:
                   maxLength: 35
                 broken:
                   type: boolean
+                  readOnly: true
                 duplicate:
                   type: integer
                   minimum: 1
@@ -706,6 +746,19 @@ paths:
                 note:
                   type: string
                   maxLength: 10000
+                cover:
+                  type: string
+                  maxLength: 2000
+                media:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [link]
+                    properties:
+                      link: {type: string, maxLength: 2000}
+                      type: {type: string, maxLength: 32}
+                      screenshot: {type: boolean}
                 collectionId:
                   type: integer
                   minimum: -1
@@ -746,6 +799,7 @@ paths:
                   maxLength: 35
                 broken:
                   type: boolean
+                  readOnly: true
                 duplicate:
                   type: integer
                   minimum: 1
@@ -818,6 +872,286 @@ paths:
           description: Bookmark not found for this User.
         '500':
           $ref: '#/components/responses/InternalError'
+  /v1/duplicates/scan:
+    post:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:read]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                collectionId: {type: integer, minimum: 0}
+                mode: {type: string, enum: [safe, all]}
+                force: {type: boolean}
+      responses:
+        '202': {description: Duplicate scan queued on the background Queue.}
+        '400': {description: Invalid scan scope or mode.}
+        '401': {description: Login required.}
+        '404': {description: Collection not found for this User.}
+        '409': {description: Duplicate checking is disabled.}
+        '503': {description: Duplicate scan could not be queued.}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/duplicates:
+    get:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:read]
+      parameters:
+        - {in: query, name: status, schema: {type: string, enum: [open, dismissed, merged, stale]}}
+        - {in: query, name: collectionId, schema: {type: integer, minimum: 0}}
+        - {in: query, name: page, schema: {type: integer, minimum: 0}}
+        - {in: query, name: perpage, schema: {type: integer, minimum: 1, maximum: 100}}
+      responses:
+        '200': {description: Duplicate review groups and summary.}
+        '401': {description: Login required.}
+        '404': {description: Collection not found for this User.}
+        '409': {description: Duplicate checking is disabled.}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/duplicates/{id}:
+    parameters:
+      - {in: path, name: id, required: true, schema: {type: string}}
+    get:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:read]
+      responses:
+        '200': {description: One duplicate review group.}
+        '401': {description: Login required.}
+        '404': {description: Duplicate group not found.}
+        '409': {description: Duplicate checking is disabled.}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/duplicates/{id}/resolve:
+    parameters:
+      - {in: path, name: id, required: true, schema: {type: string}}
+    post:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: {type: string, enum: [dismiss, merge]}
+                survivorId: {type: integer, minimum: 1}
+                expectedFingerprint: {type: string}
+      responses:
+        '200': {description: Duplicate group resolved or merged.}
+        '400': {description: Invalid duplicate resolution.}
+        '401': {description: Login required.}
+        '404': {description: Duplicate group not found.}
+        '409': {description: Duplicate group changed or merge conflict.}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/duplicates/merge/{id}/undo:
+    parameters:
+      - {in: path, name: id, required: true, schema: {type: string}}
+    post:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:write]
+      responses:
+        '200': {description: Merge operation undone and previous Bookmark state restored.}
+        '401': {description: Login required.}
+        '404': {description: Merge operation not found.}
+        '409': {description: Survivor changed after the merge.}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/raindrop/{id}/link-check:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    post:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:write]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        '202':
+          description: Link check queued without making a direct client request to the target URL.
+        '401':
+          description: Login required.
+        '403':
+          description: Editor access is required for the Bookmark.
+        '404':
+          description: Bookmark not found for this User.
+        '409':
+          description: Link checks are disabled for this User.
+        '429':
+          description: Manual link-check rate limit exceeded.
+        '503':
+          description: Link check could not be queued.
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/raindrop/{id}/archive:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    get:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:read]
+      responses:
+        '200': {description: Current Web Archive state and version metadata.}
+        '401': {description: Login required.}
+        '404': {description: Bookmark not found for this User.}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:write]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                trigger: {type: string, enum: [manual, create, url_change, schedule, ai_update]}
+      responses:
+        '202': {description: Web Archive capture queued on the background Queue.}
+        '400': {description: Invalid Web Archive request.}
+        '401': {description: Login required.}
+        '403': {description: Editor access is required for the Bookmark.}
+        '404': {description: Bookmark not found for this User.}
+        '503': {description: Web Archive capture could not be queued.}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:write]
+      responses:
+        '200': {description: Web Archive records were deleted.}
+        '401': {description: Login required.}
+        '403': {description: Editor access is required for the Bookmark.}
+        '404': {description: Bookmark not found for this User.}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/archive/{id}/view:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string}
+    get:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:read]
+      responses:
+        '200': {description: Sanitized authorized Web Archive document.}
+        '401': {description: Login required.}
+        '404': {description: Web Archive version not found.}
+        '409': {description: Web Archive version is not ready.}
+        '503': {description: Content storage is unavailable.}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/archive/{id}/assets/{assetId}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string}
+      - in: path
+        name: assetId
+        required: true
+        schema: {type: string}
+    get:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:read]
+      responses:
+        '200': {description: Authorized cleared Web Archive asset.}
+        '401': {description: Login required.}
+        '404': {description: Web Archive asset not found.}
+        '409': {description: Web Archive asset is not ready.}
+        '503': {description: Content storage is unavailable.}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/archive/{id}/download:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string}
+    get:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:read]
+      responses:
+        '200': {description: Authorized Web Archive document download.}
+        '401': {description: Login required.}
+        '404': {description: Web Archive version not found.}
+        '409': {description: Web Archive version is not ready.}
+        '503': {description: Content storage is unavailable.}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/archive/{id}/publish:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string}
+    post:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:write]
+      responses:
+        '200': {description: Web Archive snapshot published to its public Collection.}
+        '401': {description: Login required.}
+        '403': {description: Collection Owner access is required.}
+        '404': {description: Web Archive version not found.}
+        '409': {description: Web Archive content is not ready.}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:write]
+      responses:
+        '200': {description: Web Archive snapshot publication revoked.}
+        '401': {description: Login required.}
+        '403': {description: Collection Owner access is required.}
+        '404': {description: Web Archive version not found.}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/archive/quota:
+    get:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:read]
+      responses:
+        '200': {description: Current Web Archive storage usage and quota.}
+        '401': {description: Login required.}
+        '500': {$ref: '#/components/responses/InternalError'}
   /v1/raindrops:
     post:
       security:
@@ -854,6 +1188,19 @@ paths:
                       note:
                         type: string
                         maxLength: 10000
+                      cover:
+                        type: string
+                        maxLength: 2000
+                      media:
+                        type: array
+                        maxItems: 100
+                        items:
+                          type: object
+                          required: [link]
+                          properties:
+                            link: {type: string, maxLength: 2000}
+                            type: {type: string, maxLength: 32}
+                            screenshot: {type: boolean}
                       collectionId:
                         type: integer
                         minimum: -1
@@ -880,6 +1227,7 @@ paths:
                         maxLength: 35
                       broken:
                         type: boolean
+                        readOnly: true
                       duplicate:
                         type: integer
                         minimum: 1
@@ -907,6 +1255,43 @@ paths:
                 type: string
         '401':
           description: Login required.
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/raindrops/link-check:
+    post:
+      security:
+        - SessionCookie: []
+        - BearerToken: []
+      x-bearer-scopes: [bookmarks:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  uniqueItems: true
+                  items:
+                    type: integer
+                    minimum: 1
+      responses:
+        '202':
+          description: Authorized Bookmark link checks queued for the shared background Queue.
+        '400':
+          description: Invalid or oversized Bookmark ID list.
+        '401':
+          description: Login required.
+        '403':
+          description: One or more Bookmarks are not editable by this User.
+        '409':
+          description: Link checks are disabled for this User.
+        '429':
+          description: Manual link-check rate limit exceeded.
         '500':
           $ref: '#/components/responses/InternalError'
   /v1/raindrops/{collectionId}:
@@ -2390,7 +2775,12 @@ paths:
   /v2/ai/config:
     get:
       responses:
-        '200': {description: Authenticated Workers AI and redacted Custom AI Provider configuration; AI capacity is managed by Cloudflare.}
+        '200': {description: Authenticated Workers AI model, thinking settings, redacted Custom AI Provider configuration, and AI Gateway status.}
+        '401': {description: Login required.}
+  /v2/ai/models:
+    get:
+      responses:
+        '200': {description: Cloudflare Workers AI model catalog with selectable and reasoning metadata.}
         '401': {description: Login required.}
   /v2/ai/provider:
     get:
@@ -2409,6 +2799,7 @@ paths:
                 endpoint: {type: string, format: uri, description: Public HTTPS OpenAI-compatible endpoint.}
                 model: {type: string, maxLength: 200}
                 apiKey: {type: string, writeOnly: true, maxLength: 4096}
+                reasoningMode: {type: string, enum: [unsupported, reasoning_effort, chat_template_kwargs.enable_thinking, chat_template_kwargs.thinking]}
       responses:
         '200': {description: Provider tested and saved with the API key encrypted at rest.}
         '400': {description: Invalid endpoint, model, credentials, or provider response.}
@@ -2438,8 +2829,12 @@ paths:
         '401': {description: Login required.}
   /v2/ai/quota:
     get:
+      parameters:
+        - in: query
+          name: days
+          schema: {type: integer, minimum: 1, maximum: 90, default: 30}
       responses:
-        '200': {description: Cloudflare-managed AI capacity metadata; application usage limits are not imposed.}
+        '200': {description: Real-time AI Gateway balance, usage, per-model totals, threshold status, and history data.}
         '401': {description: Login required.}
   /v2/ai/context:
     get:
@@ -2497,6 +2892,27 @@ paths:
         '404': {description: Bookmark is not owned by or shared with the User.}
         '409': {description: Custom AI Provider is not configured.}
         '503': {description: Workers AI is unavailable.}
+  /v2/ai/prompt-optimize:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [field]
+              properties:
+                field: {type: string, enum: [collection, tags, note], description: Prompt category to optimize.}
+                prompt: {type: string, maxLength: 4000, description: Current user-configured Prompt.}
+                language: {type: string, maxLength: 32}
+                provider: {type: string, enum: [workers_ai, custom], description: Explicit provider choice.}
+      responses:
+        '200': {description: Optimized Prompt preview; no user configuration is written.}
+        '400': {description: Invalid Prompt or provider input.}
+        '401': {description: Login required.}
+        '409': {description: Custom AI Provider is not configured.}
+        '502': {description: Provider returned an invalid optimized Prompt.}
+        '503': {description: AI Provider is unavailable.}
   /v2/ai/tools:
     get:
       responses:

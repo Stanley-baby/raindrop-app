@@ -4,18 +4,27 @@ import { currentTab } from '~target'
 
 let icon = unescape('%u2713') //✓, glitchy without escape in safari
 
-export async function updateBadge() {
-    const { url, id: tabId } = await currentTab()
-    if (!url) return
+export async function updateBadge(tabId) {
+    let tab
+    try {
+        tab = Number.isInteger(tabId) ? await browser.tabs.get(tabId) : await currentTab()
+    } catch {
+        // A tab can disappear between an activation/update event and this call.
+        return
+    }
+    const { url, id } = tab || {}
+    if (!url || !Number.isInteger(id)) return
 
-    await Promise.all([
-        browser.action.setBadgeBackgroundColor({tabId, color: '#0087EA'}),
-        browser.action.setBadgeText({tabId, text: has(url) ? icon : ''}),
+    try {
+        await Promise.all([
+        browser.action.setBadgeBackgroundColor({tabId: id, color: '#0087EA'}),
+        browser.action.setBadgeText({tabId: id, text: has(url) ? icon : ''}),
 
         ...(typeof browser.action.setBadgeTextColor == 'function' ? [
-            browser.action.setBadgeTextColor({tabId, color: '#FFFFFF'})
+            browser.action.setBadgeTextColor({tabId: id, color: '#FFFFFF'})
         ] : []),
-    ])
+        ])
+    } catch {}
 }
 
 export async function open(path) {
@@ -35,13 +44,17 @@ export async function open(path) {
 
 async function onTabsUpdated(id, details = {}) {
     if (details?.status == 'complete')
-        await updateBadge()
+        await updateBadge(id)
+}
+
+async function onTabsActivated({ tabId }) {
+    await updateBadge(tabId)
 }
 
 export default function() {
     browser.tabs.onUpdated.removeListener(onTabsUpdated)
     browser.tabs.onUpdated.addListener(onTabsUpdated)
 
-    browser.tabs.onActivated.removeListener(updateBadge)
-    browser.tabs.onActivated.addListener(updateBadge)
+    browser.tabs.onActivated.removeListener(onTabsActivated)
+    browser.tabs.onActivated.addListener(onTabsActivated)
 }

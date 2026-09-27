@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Self-hosted server settings</title>
+    <link href="modern-normalize.css" rel="stylesheet" />
+    <link href="settings.css" rel="stylesheet" />
+</head>
+<body>
+    <main>
+        <h1>Connect this extension to your server</h1>
+        <p>Set the Web and API origins for this self-hosted instance. Save again after changing your domain.</p>
+        <form id="runtime-domain-form">
+            <label for="app-origin">Web address / 网页地址</label>
+            <input id="app-origin" type="url" placeholder="https://bookmarks.example" required autocomplete="url" />
+
+            <label for="api-origin">API address / API 地址</label>
+            <input id="api-origin" type="url" placeholder="https://bookmarks.example" required autocomplete="url" />
+
+            <p class="hint">Use the root origin only (no path). HTTPS is required except for localhost development.</p>
+            <button id="save" type="submit">Save and verify API</button>
+        </form>
+        <p id="status" role="status" aria-live="polite"></p>
+        <a id="open-app" hidden>Open Web app / 打开网页</a>
+        <p class="hint">API access is requested only for the API address. You can change these settings from the extension's Options page.</p>
+    </main>
+    <script src="runtime-origin.js"></script>
+    <script src="settings.js"></script>
+</body>
+</html>

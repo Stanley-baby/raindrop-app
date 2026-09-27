@@ -88,12 +88,13 @@ test('OpenAPI v1 paths and methods stay in lockstep with the route manifest', ()
     }
 })
 
-const materializePath = (path, { collectionId = '0', contentId = 'fixture-content', userId = '2', id = 'fixture-id', slug = 'fixture-slug' } = {}) => path
+const materializePath = (path, { collectionId = '0', contentId = 'fixture-content', userId = '2', id = 'fixture-id', slug = 'fixture-slug', query = 'all' } = {}) => path
     .replaceAll(':collectionId', collectionId)
     .replaceAll(':contentId', contentId)
     .replaceAll(':userId', userId)
     .replaceAll(':id', id)
     .replaceAll(':slug', slug)
+    .replaceAll(':query', query)
 
 const fixtureRequest = (item, { query = item.request.query, body = item.request.body, cookie = true, collectionId = '0', id = 'fixture-id', contentId = 'fixture-content' } = {}) => {
     const params = new URLSearchParams(query || {})
@@ -257,6 +258,7 @@ class PermissionDatabase {
     }
 
     prepare(sql) {
+        let values = []
         const session = {
             session_id: 'fixture-session', user_id: 1, id: 1, email: 'fixture@example.test',
             name: 'Fixture', email_verified_at: this.verified ? 1 : null, federated_only: 0, google_enabled: false,
@@ -266,6 +268,7 @@ class PermissionDatabase {
             if (sql.includes('FROM sessions s')) return session
             if (sql.includes('FROM collections')) return { id: 1, user_id: 2, title: 'Shared', parent_id: null, removed_at: null }
             if (sql.includes('FROM collection_collaborators') && sql.includes('SELECT role')) return { role: 'viewer' }
+            if (sql.includes('FROM bookmarks') && sql.includes('user_id = ?') && Number(values[1]) === 1) return null
             if (sql.includes('FROM bookmarks')) return {
                 id: 1, user_id: 2, url: 'https://example.test', title: 'Shared', description: '', note: '',
                 collection_id: 1, tags: '[]', highlights: '[]', removed_at: null
@@ -274,11 +277,16 @@ class PermissionDatabase {
                 id: 'fixture-content', bookmark_id: 1, kind: 'snapshot', content_type: 'text/html',
                 status: 'cleared', object_key: 'fixture', size_bytes: 1
             }
+            if (sql.includes('FROM web_archive_versions')) return {
+                id: 'fixture-id', archive_id: 'fixture-archive', user_id: 2, bookmark_id: 1,
+                status: 'ready', root_content_id: 'fixture-content', source_url: 'https://example.test',
+                final_url: 'https://example.test'
+            }
             return null
         }
         const all = async () => ({ results: [] })
         const run = async () => ({ meta: { changes: 1, last_row_id: 1 } })
-        return { bind: () => ({ first, all, run }) }
+        return { bind: (...next) => { values = next; return { first, all, run } } }
     }
 }
 

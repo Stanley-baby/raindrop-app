@@ -5,7 +5,7 @@ import { connect } from 'react-redux'
 import * as actions from '~data/actions/bookmarks'
 
 import Popover, { Menu, MenuItem, MenuSeparator } from '~co/overlay/popover'
-import { Confirm } from '~co/overlay/dialog'
+import { Alert, Confirm, Error } from '~co/overlay/dialog'
 import Button from '~co/common/button'
 import Icon from '~co/common/icon'
 
@@ -64,6 +64,17 @@ class BookmarksSelectModeMore extends React.Component {
         this.props.reparseSelected(this.props.spaceId)
     }
 
+    onRecheckClick = (e)=>{
+        e.preventDefault()
+        this.props.recheckSelected(
+            this.props.spaceId,
+            summary => Alert(t.s(summary.failed ? 'linkCheckFailed' : 'linkCheckSucceeded'), {
+                description: t.format('linkCheckBatchSummary', summary.reachable, summary.broken, summary.uncertain, summary.skipped, summary.failed)
+            }),
+            Error
+        )
+    }
+
     render() {
         const { selectMode: { all, ids } } = this.props
 
@@ -88,6 +99,11 @@ class BookmarksSelectModeMore extends React.Component {
                             <MenuItem onClick={this.onReparseClick}>
                                 <Icon name='refresh' />
                                 {t.s('refreshPreview')}
+                            </MenuItem>
+
+                            <MenuItem onClick={this.onRecheckClick}>
+                                <Icon name='broken' />
+                                {t.s('recheckLink')}
                             </MenuItem>
 
                             <MenuSeparator />

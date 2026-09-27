@@ -9,11 +9,18 @@ import Filter from '~co/filters/item'
 import TagsSection from '~co/tags/section'
 import Tag from '~co/tags/item'
 
-export default function MySidebarFiltersTags({ children, activeId }) {
+export default function MySidebarFiltersTags({ children, activeId, spaceId }) {
     const dispatch = useDispatch()
 
-    //load
-    useEffect(()=>{dispatch(load('global'))}, [])
+    //load after the first bookmark screen is ready
+    const bookmarksReady = useSelector(state=>{
+        const status = state.bookmarks?.spaces?.[spaceId]?.status?.main
+        return status == 'loaded' || status == 'empty' || status == 'error' || status == 'notFound'
+    })
+    useEffect(()=>{
+        if (bookmarksReady)
+            dispatch(load('global'))
+    }, [dispatch, bookmarksReady])
 
     //data
     const { tags_hide, filters_hide } = useSelector(state=>state.config)

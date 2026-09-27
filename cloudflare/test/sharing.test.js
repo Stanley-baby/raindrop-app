@@ -152,8 +152,8 @@ class SharingDatabase {
                 return { meta: { changes: item ? 1 : 0 } }
             }
             if (sql.includes('UPDATE collections SET title')) {
-                const item = this.collections.find(collection => collection.id === Number(values[5]) && collection.user_id === Number(values[6]))
-                if (item) Object.assign(item, { title: values[0], parent_id: values[1], slug: values[2], is_public: Number(values[3]), updated_at: values[4] })
+                const item = this.collections.find(collection => collection.id === Number(values[sql.includes('view = ?') ? 9 : 6]) && collection.user_id === Number(values[sql.includes('view = ?') ? 10 : 7]))
+                if (item) Object.assign(item, { title: values[0], parent_id: values[1], slug: values[2], is_public: Number(values[3]), cover: values[4], ...(sql.includes('view = ?') ? { view: values[5], expanded: Number(values[6] || 0), sort: values[7], updated_at: values[8] } : { updated_at: values[5] }) })
                 return { meta: { changes: item ? 1 : 0 } }
             }
             if (sql.includes('INSERT INTO published_snapshots')) {
@@ -233,6 +233,10 @@ test('public links keep the numeric ID, hide private snapshots, and expose only 
     const env = envFor(db)
     const created = await worker.fetch(jsonRequest('/v1/collection', 'POST', { title: 'Public Root', slug: 'public-root' }), env)
     const collectionId = (await created.json()).item._id
+    const cover = 'https://images.example.test/collection-cover.png'
+    const coverSet = await worker.fetch(jsonRequest('/v1/collection/' + collectionId, 'PUT', { cover: [cover] }), env)
+    assert.equal(coverSet.status, 200)
+    assert.deepEqual((await coverSet.json()).item.cover, [cover])
     db.bookmarks.push({ id: 1, user_id: 1, collection_id: collectionId, url: 'https://example.test/public', title: 'Public bookmark', description: 'metadata', tags: '["tag"]', created_at: 1, updated_at: 1, removed_at: null })
     db.contents.push({ id: 'snapshot-1', user_id: 1, bookmark_id: 1, kind: 'snapshot', status: 'cleared', object_key: 'content/1/snapshot-1', filename: 'page.html', content_type: 'text/html', size_bytes: 14 })
 
@@ -271,4 +275,13 @@ test('public links keep the numeric ID, hide private snapshots, and expose only 
     await worker.fetch(jsonRequest(`/v1/collection/${collectionId}/published-snapshots/snapshot-1`, 'DELETE', undefined), env)
     assert.equal((await worker.fetch(request(`/v1/public/collections/${collectionId}/renamed`), env)).status, 200)
     assert.equal((await (await worker.fetch(request('/public/content/snapshot-1'), env)).json()).error, 'content_not_found')
+})
+
+test('collection cover catalog is available without an external image service', async () => {
+    const response = await worker.fetch(request('/v1/collections/covers/', { headers: { Cookie: 'rd_session=test' } }), envFor(new SharingDatabase()))
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.items[0].title, 'Colors')
+    assert.equal(body.items[0].icons.length, 8)
+    assert.match(body.items[0].icons[0].png, /^data:image\/svg\+xml,/)
 })

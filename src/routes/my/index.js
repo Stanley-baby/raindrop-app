@@ -4,6 +4,7 @@ import { Route } from 'react-router-dom'
 import Layout from './layout'
 import Item from './item'
 import Space from './space'
+import Duplicates from './duplicates'
 
 export default function PageMy() {
     const nested = (<>
@@ -12,6 +13,7 @@ export default function PageMy() {
 
     return (
         <Route element={<Layout />}>
+            <Route path='duplicates' element={<Duplicates />} />
             <Route path=':cId'>
                 <Route path='' element={<Space />}>{nested}</Route>
                 <Route path='full' element={<Space />}>{nested}</Route>

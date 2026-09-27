@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { webcrypto } from 'node:crypto'
 import test from 'node:test'
-import worker, { createMetadataTask, fetchPageMetadata, processMetadataTask, validateFetchableUrl } from '../src/index.js'
+import worker, { bookmarkMedia, createMetadataTask, fetchPageMetadata, parsePageMetadata, processMetadataTask, validateFetchableUrl } from '../src/index.js'
 
 globalThis.crypto ||= webcrypto
 
@@ -27,7 +27,7 @@ class TaskDatabase {
             updated_at: task.updated_at || 1,
             completed_at: task.completed_at || null
         }] : []
-        this.bookmarks = [{ id: 1, user_id: 1, title: '', description: '', cover: '', removed_at: null }]
+        this.bookmarks = [{ id: 1, user_id: 1, title: '', description: '', cover: '', media: '[]', removed_at: null }]
         this.alerts = []
         this.nextId = 1
     }
@@ -92,12 +92,18 @@ class TaskDatabase {
                 return { meta: { changes: 1 } }
             }
             if (sql.includes('UPDATE bookmarks SET')) {
-                const [title, description, cover, updatedAt, id, userId] = values
+                const hasMedia = sql.includes('media = CASE')
+                const [title, description, cover] = values
+                const media = hasMedia ? values[3] : null
+                const updatedAt = values[hasMedia ? 4 : 3]
+                const id = values[hasMedia ? 5 : 4]
+                const userId = values[hasMedia ? 6 : 5]
                 const bookmark = this.bookmarks.find(item => item.id === id && item.user_id === userId && !item.removed_at)
                 if (!bookmark) return { meta: { changes: 0 } }
                 if (!bookmark.title) bookmark.title = title
                 if (!bookmark.description) bookmark.description = description
                 if (!bookmark.cover) bookmark.cover = cover
+                if (hasMedia && media && (!bookmark.media || bookmark.media === '[]')) bookmark.media = media
                 bookmark.updated_at = updatedAt
                 return { meta: { changes: 1 } }
             }
@@ -165,12 +171,53 @@ class RouteTaskDatabase extends TaskDatabase {
 
 const baseEnv = db => ({ DB: db, SESSION_SECRET: 'task-secret', API_ORIGIN: 'https://api.example.test' })
 
+test('metadata parser collects and deduplicates all supported image sources', () => {
+    const metadata = parsePageMetadata(`
+        <meta property="og:image" content="https://public.example.test/og-a.png">
+        <meta property="og:image" content="https://public.example.test/og-b.png">
+        <meta name="twitter:image" content="https://public.example.test/twitter.png">
+        <meta name="image_src" content="https://public.example.test/meta-image-src.png">
+        <link rel="image_src" href="https://public.example.test/link-image-src.png">
+        <meta property="og:image" content="https://public.example.test/og-a.png">
+    `)
+    assert.deepEqual(metadata.media, [
+        { link: 'https://public.example.test/og-a.png', type: 'image' },
+        { link: 'https://public.example.test/og-b.png', type: 'image' },
+        { link: 'https://public.example.test/twitter.png', type: 'image' },
+        { link: 'https://public.example.test/meta-image-src.png', type: 'image' },
+        { link: 'https://public.example.test/link-image-src.png', type: 'image' }
+    ])
+    assert.equal(metadata.cover, metadata.media[0].link)
+})
+
+test('metadata parser resolves relative image URLs against the fetched page', () => {
+    const metadata = parsePageMetadata(`
+        <meta property="og:image" content="/images/cover.png">
+        <meta name="twitter:image" content="//cdn.example.test/twitter.png">
+    `, 'https://public.example.test/articles/page')
+    assert.deepEqual(metadata.media, [
+        { link: 'https://public.example.test/images/cover.png', type: 'image' },
+        { link: 'https://cdn.example.test/twitter.png', type: 'image' }
+    ])
+})
+
+test('bookmark media normalization keeps the cover in the 100 item limit', () => {
+    const media = Array.from({ length: 100 }, (_, index) => ({ link: 'https://public.example.test/' + index }))
+    const normalized = bookmarkMedia(media, 'https://public.example.test/selected.png')
+    assert.equal(normalized.length, 100)
+    assert.equal(normalized.at(-1).link, 'https://public.example.test/selected.png')
+})
+
 test('fetchable URL validation rejects internal destinations and accepts public HTTP(S)', () => {
     for (const value of [
         'http://localhost/private',
         'http://127.0.0.1:8080',
         'http://10.0.0.1',
         'http://169.254.169.254/latest/meta-data',
+        'http://192.0.0.1/',
+        'http://192.0.2.1/',
+        'http://192.168.1.1/',
+        'http://198.51.100.1/',
         'http://[::1]/',
         'http://metadata.google.internal/',
         'ftp://public.example.test/file',
@@ -178,6 +225,9 @@ test('fetchable URL validation rejects internal destinations and accepts public 
     ]) assert.equal(validateFetchableUrl(value).ok, false, value)
     assert.equal(validateFetchableUrl('https://public.example.test/page').ok, true)
     assert.equal(validateFetchableUrl('http://public.example.test:80/page').ok, true)
+    assert.equal(validateFetchableUrl('http://192.0.66.108/').ok, true)
+    assert.equal(validateFetchableUrl('http://192.2.0.1/').ok, true)
+    assert.equal(validateFetchableUrl('http://198.51.99.1/').ok, true)
 })
 
 test('configured DNS resolution rejects private answers before fetching a hostname', async t => {
@@ -195,6 +245,24 @@ test('configured DNS resolution rejects private answers before fetching a hostna
         error => error.code === 'url_not_public'
     )
     assert.equal(originFetches, 0)
+})
+
+test('configured DNS resolution allows public 192.0 addresses before fetching a hostname', async t => {
+    const originalFetch = globalThis.fetch
+    let originFetches = 0
+    globalThis.fetch = async url => {
+        if (String(url).startsWith('https://dns.example.test/resolve')) {
+            const type = new URL(String(url)).searchParams.get('type')
+            return Response.json({ Status: 0, Answer: type === 'A'
+                ? [{ type: 1, data: '192.0.66.108' }]
+                : [{ type: 28, data: '2a04:fa87:fffd::c000:426c' }] })
+        }
+        originFetches++
+        return new Response('<title>NASA</title>', { status: 200, headers: { 'Content-Type': 'text/html' } })
+    }
+    t.after(() => { globalThis.fetch = originalFetch })
+    await fetchPageMetadata('https://public.example.test/page', { FETCH_DNS_RESOLVER: 'https://dns.example.test/resolve' })
+    assert.equal(originFetches, 1)
 })
 
 test('metadata task creation is idempotent and queue payload contains no URL or secret', async () => {
@@ -229,7 +297,7 @@ test('queue follows redirects, enriches empty fields, and records success', asyn
     globalThis.fetch = async (url, options) => {
         requested.push([String(url), options.redirect])
         if (requested.length === 1) return new Response(null, { status: 302, headers: { Location: 'https://public.example.test/final' } })
-        return new Response('<html><title>Fetched title</title><meta name="description" content="Fetched description"><meta property="og:image" content="https://public.example.test/cover.png"></html>', { status: 200, headers: { 'Content-Type': 'text/html' } })
+        return new Response('<html><title>Fetched title</title><meta name="description" content="Fetched description"><meta property="og:image" content="/cover.png"><meta property="og:image" content="../cover-2.png"><meta name="twitter:image" content="//cdn.example.test/twitter.png"></html>', { status: 200, headers: { 'Content-Type': 'text/html' } })
     }
     t.after(() => { globalThis.fetch = originalFetch })
     const message = { body: { taskId: 'task-success' }, ack: () => {}, retry: () => {} }
@@ -240,6 +308,36 @@ test('queue follows redirects, enriches empty fields, and records success', asyn
     assert.equal(db.bookmarks[0].title, 'Fetched title')
     assert.equal(db.bookmarks[0].description, 'Fetched description')
     assert.equal(db.bookmarks[0].cover, 'https://public.example.test/cover.png')
+    assert.deepEqual(JSON.parse(db.bookmarks[0].media), [
+        { link: 'https://public.example.test/cover.png', type: 'image' },
+        { link: 'https://public.example.test/cover-2.png', type: 'image' },
+        { link: 'https://cdn.example.test/twitter.png', type: 'image' }
+    ])
+})
+
+test('metadata task preserves a user-selected media list', async t => {
+    const db = new TaskDatabase({ id: 'task-selected', source_url: 'https://public.example.test/selected' })
+    db.bookmarks[0].media = JSON.stringify([{ link: 'https://public.example.test/manual.png', type: 'image' }])
+    const env = baseEnv(db)
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async () => new Response('<meta property="og:image" content="https://public.example.test/parsed.png">', { status: 200, headers: { 'Content-Type': 'text/html' } })
+    t.after(() => { globalThis.fetch = originalFetch })
+
+    await processMetadataTask(env, 'task-selected')
+    assert.deepEqual(JSON.parse(db.bookmarks[0].media), [{ link: 'https://public.example.test/manual.png', type: 'image' }])
+})
+
+test('metadata task preserves a legacy cover when media is empty', async t => {
+    const db = new TaskDatabase({ id: 'task-legacy-cover', source_url: 'https://public.example.test/legacy' })
+    db.bookmarks[0].cover = 'https://public.example.test/selected.png'
+    const env = baseEnv(db)
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async () => new Response('<meta property="og:image" content="https://public.example.test/parsed.png">', { status: 200, headers: { 'Content-Type': 'text/html' } })
+    t.after(() => { globalThis.fetch = originalFetch })
+
+    await processMetadataTask(env, 'task-legacy-cover')
+    assert.deepEqual(JSON.parse(db.bookmarks[0].media), [])
+    assert.equal(db.bookmarks[0].cover, 'https://public.example.test/selected.png')
 })
 
 test('claimed tasks retain their persisted source URL after D1 projection', async t => {

@@ -17,8 +17,13 @@ the repository does not provide a shared data plane.
    account. Put the returned D1 ID and your resource names in the `selfhosted`
    blocks of `cloudflare/wrangler.private.toml`; use those names in the commands
    below if they differ from the template.
-4. Set `API_ORIGIN`, `APP_ORIGIN`, `AI_PAGE_ORIGIN`, and `CORS_ORIGINS` to
-   origins you own. Apply migrations and deploy:
+4. Keep `RUNTIME_DOMAIN_MODE = "true"` and leave `API_ORIGIN`, `APP_ORIGIN`,
+   and `AI_PAGE_ORIGIN` empty when Pages and API use the same public origin. The
+   Worker derives the API origin from each request and defaults the Web origin
+   to that same origin. If Pages and API use separate domains, set `APP_ORIGIN`
+   to the Web root and `AI_PAGE_ORIGIN` to its `/ai` URL; credentialed CORS then
+   accepts that configured Web origin. Keep
+   `CORS_ORIGINS = "chrome-extension://*"`. Apply migrations and deploy:
 
    ```sh
    npx wrangler d1 migrations apply raindrop-db-selfhosted --remote \
@@ -29,28 +34,45 @@ the repository does not provide a shared data plane.
 5. Add `SESSION_SECRET` and `ENCRYPTION_KEY` at minimum. Add email, OAuth,
    Turnstile, scanner, and Apple credentials only when you enable those
    features. Secrets are stored with `wrangler secret put` and never committed.
+6. In the Cloudflare Pages project, add a Service binding named `API` pointing
+   to `raindrop-api-selfhosted`, then redeploy Pages once so the binding takes
+   effect. The Web build routes `/v1/*`, `/v2/*`, `/health`, `/version`,
+   `/render/*`, and `/public/content/*` through that binding. Attach the
+   user-selected custom domain to Pages after that; changing the Pages domain
+   does not require rebuilding either project.
 
 The committed `wrangler.toml` contains placeholders only. The ignored
-`wrangler.private.toml` is the local deployment copy. A custom API domain is
-optional; `workers.dev` is sufficient for a self-hosted instance.
+`wrangler.private.toml` is the local deployment copy. The Pages `API` Service
+binding means the API Worker does not need a public custom domain.
 
 ## Client builds and GitHub Releases
 
-Build clients against the same self-hosted origins:
+Build the Web client without host-specific values; API, app, AI, archive, and
+public-content URLs resolve from the current browser origin at runtime:
 
 ```sh
-export API_ORIGIN=https://api.example.com
-export APP_ORIGIN=https://app.example.com
-export AI_PAGE_ORIGIN=https://app.example.com/ai
 export REPOSITORY_URL=https://github.com/your-org/your-repo
 export HELP_ORIGIN=https://github.com/your-org/your-repo
 npm run build:selfhosted
+```
 
+The self-hosted extension uses a runtime configuration page and does not need
+build-time origins:
+
+```sh
 npm run build:extension:selfhosted
 ```
 
+On first install, enter the Web and API root origins in the extension's Options
+page. It requests optional access only for the API host, verifies `/health`, and
+saves both origins in `storage.sync`; changing either origin later does not
+require rebuilding the extension.
+
 The Web output is written to `dist/web/selfhosted`; extension ZIPs are written
-to `dist/*.zip`. Publish those artifacts with a GitHub Release and install the
+to `dist/*.zip`. When enabling OAuth, register the custom-domain callback URLs
+with each identity provider (for example, `/v1/auth/google/callback`). Updating
+provider allowlists does not require rebuilding the clients. Publish extension
+artifacts with a GitHub Release and install the
 extensions manually in browser developer mode. No browser or mobile store
 account is required. Safari source is retained for operators who choose to
 sign it themselves.
@@ -104,6 +126,21 @@ and Highlights only; Snapshots and attachments are excluded by default. Drafts
 are returned for editing and are never written until the User explicitly applies
 them.
 
+The settings page loads the complete Workers AI catalog from `/v2/ai/models` and
+stores the selected model and thinking level in the User config. Models marked
+with reasoning metadata expose a thinking switch and low/medium/high level;
+custom providers display their saved model name and can opt into one documented
+reasoning protocol. To enable AI Gateway routing and live usage, set
+`AI_GATEWAY_ID` and `CF_ACCOUNT_ID` in the environment and store
+`CF_API_TOKEN` as a Worker secret with AI Gateway Read and Workers AI Read
+permissions. Workers AI calls then include the Gateway binding options, while
+`/v2/ai/quota?days=30` reads the credit balance, billing history, Gateway logs,
+per-model totals, daily history, and low-balance alert state. The settings page
+renders these values without exposing the Cloudflare token. Set
+`AI_GATEWAY_LOW_BALANCE_THRESHOLD` to change the alert threshold; the default
+is 5 credits. Custom API calls remain outside Gateway accounting unless the
+provider is separately routed through AI Gateway.
+
 AI Tools are exposed through `GET /v2/ai/tools` and authorized read execution on
 `POST /v2/ai/tools`. Bookmark writes use `POST /v2/ai/action-proposals` and
 remain pending until `POST /v2/ai/action-proposals/:id/decision` receives
@@ -130,6 +167,16 @@ with backoff, then marks the task `dead_letter` and exposes `POST
 When `FETCH_DNS_RESOLVER` is configured, each hostname is resolved over HTTPS
 and private or non-public A/AAAA answers are rejected before the fetch.
 
+V1.5 duplicate detection is enabled with `DUPLICATE_CHECK_V15_ENABLED=true`.
+`POST /v1/duplicates/scan` creates a Queue-backed `duplicate_scan` task; the
+worker indexes HTTP(S) URLs in batches, groups exact and allow-listed tracking
+parameter variants, and exposes review groups through `GET /v1/duplicates`.
+Resolving a group uses `POST /v1/duplicates/:id/resolve`: dismissals are
+non-destructive, while merges snapshot every affected Bookmark, move absorbed
+records to the Recycle Bin, and can be undone with
+`POST /v1/duplicates/merge/:id/undo`. The scan never performs an external fetch
+and never merges records across Users.
+
 Protected content is stored only in the private `CONTENT_BUCKET`. When
 `ATTACHMENT_SCAN_ENABLED=true`, uploads are limited to `ATTACHMENT_MAX_BYTES`
 (50 MiB in every profile), start quarantined, and enqueue an `attachment_scan`
@@ -140,6 +187,18 @@ an approved/cleared status before downloads become available. `POST
 the Beta Worker uses the `BROWSER` Browser Run binding, stores the result
 privately, and applies the same safety check.
 Downloads use `/v1/content/:id/download` and never expose an R2 object URL.
+
+V2 Web Archive uses the same private content bucket and Queue consumer. Enable
+`ARCHIVE_V2_ENABLED=true` and `ARCHIVE_AUTO_CAPTURE=true` only after applying
+`migrations/0030_web_archive.sql`. `POST /v1/raindrop/:id/archive` queues a
+rendered, sanitized snapshot; `GET /v1/raindrop/:id/archive` returns its state,
+and `/v1/archive/:version/view` serves only cleared content with a restrictive
+CSP. The capture task validates every page and asset URL with the existing
+public-address checks, stores HTML/assets as protected content, and records
+failure reasons without putting page bodies into logs. Set `ARCHIVE_SCAN_ENABLED`
+to `true` with the scanner configured before enabling automatic capture in a
+shared environment. The existing `/cache` client path remains a compatibility
+alias while the Web client uses the archive endpoint directly.
 
 Beta currently sets `ATTACHMENT_SCAN_ENABLED=false`, so attachments remain
 private but are marked Cleared immediately and do not enqueue a scanner task.

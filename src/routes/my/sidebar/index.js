@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react'
 import t from '~t'
-import { useParams } from 'react-router-dom'
+import { NavLink, useParams } from 'react-router-dom'
 
 import Button from '~co/common/button'
 import Icon from '~co/common/icon'
@@ -42,7 +42,19 @@ export default function PageMySidebar() {
             </Header>
 
             <Content>
-                <FiltersTags activeId={activeId}>
+                <NavLink
+                    to='/my/duplicates'
+                    style={({ isActive }) => ({
+                        display: 'block',
+                        padding: '8px 16px',
+                        color: 'inherit',
+                        textDecoration: 'none',
+                        fontWeight: isActive ? 600 : 400,
+                        opacity: isActive ? 1 : .75
+                    })}>
+                    {t.s('duplicateBookmarks')}
+                </NavLink>
+                <FiltersTags activeId={activeId} spaceId={cId}>
                     {(customRows, customRowRenderer)=>
                         <Collections
                             activeId={activeId}

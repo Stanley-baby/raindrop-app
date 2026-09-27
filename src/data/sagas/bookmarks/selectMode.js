@@ -1,9 +1,12 @@
-import { call, put, takeEvery, select, all } from 'redux-saga/effects'
+import { call, put, takeEvery, select, all, delay } from 'redux-saga/effects'
 import _ from 'lodash-es'
 import Api from '../../modules/api'
 import ApiError from '../../modules/error'
+import captureScreenshot from '../../modules/captureScreenshot'
 
 import { getUrl } from '../../helpers/bookmarks'
+import { getBookmark, getBookmarkScreenshotIndex, getMeta } from '../../helpers/bookmarks'
+import { independentService } from '~config/environment'
 
 import {
 	SELECT_MODE_IMPORTANT_SELECTED,
@@ -13,9 +16,11 @@ import {
 	SELECT_MODE_MOVE_SELECTED,
 	SELECT_MODE_REMOVETAGS_SELECTED,
 	SELECT_MODE_REPARSE_SELECTED,
+	SELECT_MODE_RECHECK_SELECTED,
 	SELECT_MODE_FAIL_SELECTED,
 
 	SELECT_MODE_DISABLE,
+	SPACE_REFRESH_REQ,
 
 	BOOKMARK_UPDATE_SUCCESS,
 	BOOKMARK_REMOVE_SUCCESS,
@@ -35,9 +40,9 @@ export default function* () {
 	//Make screenshots
 	yield takeEvery(
 		SELECT_MODE_SCREENSHOT_SELECTED,
-		updateBookmarks({
+		independentService ? screenshotSelected : updateBookmarks({
 			set: ()=>({
-				media: [{link: '<screenshot>'}]
+				media: [{link: '<screenshot>', screenshot: true}]
 			}),
 			mutate: (action, item)=>({
 				...item,
@@ -104,8 +109,63 @@ export default function* () {
 		})
 	)
 
+	//Recheck selected
+	yield takeEvery(SELECT_MODE_RECHECK_SELECTED, recheckSelected)
+
 	//Remove selected
 	yield takeEvery(SELECT_MODE_REMOVE_SELECTED, removeBookmarks)
+}
+
+function* recheckSelected({ onSuccess, onFail }) {
+	const summary = { reachable: 0, broken: 0, uncertain: 0, skipped: 0, failed: 0 }
+	try {
+		const state = yield select()
+		const ids = [...new Set(selectedBookmarkGroups(state.bookmarks).flatMap(([collectionId, group]) =>
+			state.bookmarks.selectMode.all ? state.bookmarks.spaces[collectionId]?.ids || [] : group
+		))]
+		for (let offset = 0; offset < ids.length; offset += 50) {
+			const result = yield call(Api.post, 'raindrops/link-check', { ids: ids.slice(offset, offset + 50) })
+			summary.skipped += (result.skipped || []).length
+			for (const task of result.tasks || []) {
+				let completed = false
+				for (let attempt = 0; attempt < 30; attempt++) {
+					try {
+						yield delay(1000)
+						const current = yield call(Api.get, `tasks/${encodeURIComponent(task.taskId)}`)
+						const status = current.task?.status
+						if (status === 'succeeded') {
+							const outcome = current.task?.metadata?.state
+							if (outcome === 'ok') summary.reachable++
+							else if (outcome === 'broken') summary.broken++
+							else if (outcome === 'uncertain') summary.uncertain++
+							else summary.skipped++
+							completed = true
+							break
+						}
+						if (['dead_letter', 'failed'].includes(status)) {
+							summary.failed++
+							completed = true
+							break
+						}
+					} catch {
+						summary.failed++
+						completed = true
+						break
+					}
+				}
+				if (!completed) summary.failed++
+			}
+		}
+		if (summary.failed)
+			yield put({ type: SELECT_MODE_FAIL_SELECTED })
+		else
+			yield put({ type: SELECT_MODE_DISABLE })
+		yield put({ type: SPACE_REFRESH_REQ, spaceId: state.bookmarks.selectMode.spaceId })
+		if (typeof onSuccess === 'function') onSuccess(summary)
+	} catch (error) {
+		if (typeof onFail === 'function') onFail(error)
+		yield put({ type: SELECT_MODE_FAIL_SELECTED, error })
+	}
 }
 
 const updateBookmarks = ({validate, set, mutate}) => (
@@ -156,6 +216,40 @@ const updateBookmarks = ({validate, set, mutate}) => (
 	}
 )
 
+function* screenshotSelected({ onSuccess, onFail }) {
+	try {
+		const state = yield select()
+		const groups = selectedBookmarkGroups(state.bookmarks)
+		const items = []
+
+		for (const [collectionId, ids] of groups) {
+			const selectedIds = state.bookmarks.selectMode.all
+				? state.bookmarks.spaces[collectionId].ids
+				: ids
+			for (const _id of selectedIds) {
+				const item = getBookmark(state.bookmarks, _id)
+				const meta = getMeta(state.bookmarks, _id)
+				const screenshotIndex = getBookmarkScreenshotIndex(state.bookmarks, _id)
+				if (screenshotIndex !== -1)
+					items.push({ ...item, cover: meta.media[screenshotIndex].link })
+				else
+					items.push(yield call(captureScreenshot, item._id))
+			}
+		}
+
+		if (items.length)
+			yield all([
+				put({ type: SELECT_MODE_DISABLE }),
+				put({ type: BOOKMARK_UPDATE_SUCCESS, item: items })
+			])
+
+		if (typeof onSuccess === 'function') onSuccess()
+	} catch (error) {
+		if (typeof onFail === 'function') onFail(error)
+		yield put({ type: SELECT_MODE_FAIL_SELECTED, error })
+	}
+}
+
 function* removeBookmarks({onSuccess, onFail}) {
 	try{
 		const removed = yield batchApiRequestHelper('del')
@@ -190,29 +284,7 @@ function* batchApiRequestHelper(method, body={}) {
 	const state = yield select()
 	const { bookmarks } = state
 	const { selectMode } = bookmarks
-
-	//fail when nothing selected
-	if (!selectMode.all && !selectMode.ids.length)
-		throw new ApiError({ status: 400, error: 'ids', errorMessage: 'nothing selected'})
-
-	//operations should be splited by collections
-	let groupByCollection = []
-
-	//all bookmarks
-	if (parseInt(selectMode.spaceId)==0 || selectMode.all)
-		groupByCollection = [
-			[selectMode.spaceId, selectMode.ids]
-		]
-	//per collection
-	else
-		groupByCollection = _.toPairs(
-			_.groupBy(
-				_.pick(bookmarks.elements, selectMode.ids),
-				'collectionId'
-			)
-		).map(([cid, items])=>
-			[ cid, items.map(({_id})=>_id) ]
-		)
+	const groupByCollection = selectedBookmarkGroups(bookmarks)
 
 	let changed = []
 
@@ -234,4 +306,20 @@ function* batchApiRequestHelper(method, body={}) {
 	}
 
 	return changed
+}
+
+const selectedBookmarkGroups = bookmarks => {
+	const { selectMode } = bookmarks
+	if (!selectMode.all && !selectMode.ids.length)
+		throw new ApiError({ status: 400, error: 'ids', errorMessage: 'nothing selected'})
+
+	if (parseInt(selectMode.spaceId) == 0 || selectMode.all)
+		return [[selectMode.spaceId, selectMode.ids]]
+
+	return _.toPairs(
+		_.groupBy(
+			_.pick(bookmarks.elements, selectMode.ids),
+			'collectionId'
+		)
+	).map(([cid, items])=>[cid, items.map(({_id})=>_id)])
 }

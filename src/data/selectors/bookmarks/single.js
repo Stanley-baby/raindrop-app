@@ -53,12 +53,13 @@ export const makeSuggestedFields = ()=>createSelector(
 	[
 		({bookmarks}, { link })=>bookmarks.suggestedFields[link] || emptyObject
 	],
-	({ collections=[], tags=[], new_tags=[], new_collections=[], collection_recommendations=[], suggestion_status='', suggestion_source='', collection_status='', tags_status='', collection_source='', tags_source='' })=>{
+	({ collections=[], tags=[], new_tags=[], new_collections=[], create_suggestions=[], collection_recommendations=[], suggestion_status='', suggestion_source='', collection_status='', tags_status='', collection_source='', tags_source='' })=>{
 		return ({
 			collections: [...collections].splice(0, 5),
 			tags: [...tags],
 			new_tags: [...new_tags],
 			new_collections: [...new_collections].splice(0, 3),
+			create_suggestions: [...create_suggestions].splice(0, 3),
 			collection_recommendations: [...collection_recommendations].splice(0, 8),
 			suggestion_status,
 			suggestion_source,

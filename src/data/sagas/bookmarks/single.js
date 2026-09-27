@@ -1,4 +1,4 @@
-import { call, put, takeEvery, select } from 'redux-saga/effects'
+import { call, put, takeEvery, select, delay } from 'redux-saga/effects'
 import Api from '../../modules/api'
 import _ from 'lodash-es'
 
@@ -12,7 +12,7 @@ import {
 	BOOKMARK_REORDER,
 	BOOKMARK_SUGGEST_FIELDS, BOOKMARK_SUGGESTED_FIELDS,
 
-	BOOKMARK_RECOVER, BOOKMARK_IMPORTANT, BOOKMARK_SCREENSHOT, BOOKMARK_REPARSE, BOOKMARK_MOVE,
+	BOOKMARK_RECOVER, BOOKMARK_IMPORTANT, BOOKMARK_SCREENSHOT, BOOKMARK_REPARSE, BOOKMARK_RECHECK, BOOKMARK_MOVE,
 	BOOKMARKS_REPARSE_INPLACE
 } from '../../constants/bookmarks'
 
@@ -24,6 +24,7 @@ import {
 
 import { isPro } from '../../selectors/user'
 import { independentService } from '~config/environment'
+import captureScreenshot from '../../modules/captureScreenshot'
 
 //Requests
 export default function* () {
@@ -32,6 +33,7 @@ export default function* () {
 	yield takeEvery(BOOKMARK_IMPORTANT, important)
 	yield takeEvery(BOOKMARK_SCREENSHOT, screenshot)
 	yield takeEvery(BOOKMARK_REPARSE, reparse)
+	yield takeEvery(BOOKMARK_RECHECK, recheck)
 	yield takeEvery(BOOKMARK_MOVE, move)
 	yield takeEvery(BOOKMARK_REORDER, reorder)
 
@@ -46,6 +48,33 @@ export default function* () {
 	//many
 	yield takeEvery(BOOKMARKS_CREATE_REQ, createBookmarks)
 	yield takeEvery(BOOKMARKS_REPARSE_INPLACE, reparseInplace)
+}
+
+function* pollLinkCheck(taskId, _id) {
+	for (let attempt = 0; attempt < 30; attempt++) {
+		yield delay(1000)
+		const result = yield call(Api.get, `tasks/${encodeURIComponent(taskId)}`)
+		const task = result.task || {}
+		if (task.status === 'succeeded') {
+			yield put({ type: BOOKMARK_LOAD_REQ, _id })
+			return
+		}
+		if (['dead_letter', 'failed'].includes(task.status))
+			throw new Error(task.failure?.message || 'Link check failed')
+	}
+	throw new Error('Link check timed out')
+}
+
+function* recheck({ _id, ignore=false, onSuccess, onFail }) {
+	if (ignore || !_id) return
+	try {
+		const result = yield call(Api.post, `raindrop/${_id}/link-check`, {})
+		if (!result.taskId) throw new Error('Link check was not queued')
+		const metadata = yield call(pollLinkCheck, result.taskId, _id)
+		if (typeof onSuccess === 'function') onSuccess(metadata)
+	} catch (error) {
+		if (typeof onFail === 'function') onFail(error)
+	}
 }
 
 function* loadBookmark({ ignore=false, _id, onSuccess, onFail }) {
@@ -282,13 +311,35 @@ function* screenshot({_id, ignore=false, onSuccess, onFail}) {
 		const meta = getMeta(state.bookmarks, _id)
 		const screenshotIndex = getBookmarkScreenshotIndex(state.bookmarks, _id)
 
+		if (independentService && screenshotIndex !== -1) {
+			yield put({
+				type: BOOKMARK_UPDATE_SUCCESS,
+				item: {
+					...item,
+					cover: meta.media[screenshotIndex].link
+				},
+				onSuccess, onFail
+			})
+			return
+		}
+
+		if (independentService) {
+			const captured = yield call(captureScreenshot, item._id)
+			yield put({
+				type: BOOKMARK_UPDATE_SUCCESS,
+				item: captured,
+				onSuccess, onFail
+			})
+			return
+		}
+
 		var setReq = {}
 		if (screenshotIndex!=-1){
 			setReq = {
 				cover: '<screenshot>'
 			}
 		}else{
-			const newMedia = meta.media.concat([{link: '<screenshot>'}])
+			const newMedia = meta.media.concat([{link: '<screenshot>', screenshot: true}])
 			setReq = {
 				media: newMedia,
 				cover: '<screenshot>'
@@ -389,7 +440,7 @@ function* suggestFields({ obj, ignore, onSuccess, onFail, field='all', requestId
 		const pro = isPro(state)
 		if (!pro && !independentService) return
 
-		const requestOptions = { retries: 0 }
+		const requestOptions = { retries: 0, timeout: 0 }
 		const { item={} } = obj._id ?
 			yield call(Api.get, `raindrop/${obj._id}/suggest`, requestOptions) :
 			yield call(Api.post, 'raindrop/suggest', obj, requestOptions)
@@ -397,11 +448,14 @@ function* suggestFields({ obj, ignore, onSuccess, onFail, field='all', requestId
 		const tags = item.tags || []
 		const newTags = item.new_tags || []
 		const newCollections = item.new_collections || item.newCollections || []
+		const createSuggestions = item.create_suggestions || item.createSuggestions || item.new_collection_details || item.newCollectionDetails || []
 		const collectionRecommendations = item.collection_recommendations || item.collectionRecommendations || []
 		const suggestionStatus = item.suggestion_status || item.suggestionStatus ||
-			(collections.length || tags.length || newTags.length || newCollections.length || collectionRecommendations.length ? 'suggestions' : 'no_match')
+			(collections.length || tags.length || newTags.length || newCollections.length || createSuggestions.length || collectionRecommendations.length ? 'suggestions' : 'no_match')
 		const suggestionSource = item.suggestion_source || item.suggestionSource || ''
-		const collectionStatus = collections.length || newCollections.length || collectionRecommendations.length
+		const normalizedTitle = item.normalized_title || item.normalizedTitle || ''
+		const suggestedNote = item.note || item.suggested_note || item.suggestedNote || ''
+		const collectionStatus = collections.length || newCollections.length || createSuggestions.length || collectionRecommendations.length
 			? suggestionSource == 'fallback' ? 'fallback' : 'suggestions'
 			: 'no_match'
 		const tagsStatus = tags.length || newTags.length
@@ -417,6 +471,7 @@ function* suggestFields({ obj, ignore, onSuccess, onFail, field='all', requestId
 			tags,
 			new_tags: newTags,
 			new_collections: newCollections,
+			create_suggestions: createSuggestions,
 			collection_recommendations: collectionRecommendations,
 			suggestion_status: suggestionStatus,
 			suggestion_source: suggestionSource,
@@ -430,8 +485,10 @@ function* suggestFields({ obj, ignore, onSuccess, onFail, field='all', requestId
 				return field == 'collection' ? value?.collectionRequestId : field == 'tags' ? value?.tagsRequestId : value?.requestId
 			})
 		if (!requestId || !latestRequestId || requestId == latestRequestId)
-			if (typeof onSuccess == 'function') onSuccess({ status: suggestionStatus, source: suggestionSource })
+			if (typeof onSuccess == 'function') onSuccess({ status: suggestionStatus, source: suggestionSource, normalizedTitle, note: suggestedNote })
 	} catch (error) {
+		if (error?.message)
+			error.message = error.message.replace(/\s+https?:\/\/\S+\/v1\/raindrop(?:\/\d+)?\/suggest$/, '')
 		let latestRequestId
 		if (requestId)
 			latestRequestId = yield select(state=>{

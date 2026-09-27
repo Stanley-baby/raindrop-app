@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { webcrypto } from 'node:crypto'
 import test from 'node:test'
-import worker from '../src/index.js'
+import worker, { auditRoute } from '../src/index.js'
 
 /* global Uint8Array, globalThis */
 
@@ -49,14 +49,18 @@ class ContentDatabase {
             }
             if (sql.includes('UPDATE sessions SET last_seen_at')) return { meta: { changes: 1 } }
             if (sql.includes('UPDATE bookmarks SET cover = ?')) {
-                const bookmark = this.bookmarks.find(item => item.id === Number(values[2]) && item.user_id === Number(values[3]))
-                if (bookmark) bookmark.cover = values[0]
+                const media = sql.includes('media = ?')
+                const bookmark = this.bookmarks.find(item => item.id === Number(values[media ? 3 : 2]) && item.user_id === Number(values[media ? 4 : 3]))
+                if (bookmark) {
+                    bookmark.cover = values[0]
+                    if (media) bookmark.media = values[1]
+                }
                 return { meta: { changes: bookmark ? 1 : 0 } }
             }
             if (sql.includes('INSERT INTO bookmarks')) {
                 const upload = sql.includes('VALUES (?, ?, ?, ?, ?, \'[]\'')
                 const item = {
-                    id: this.nextBookmarkId++, user_id: values[0], url: values[1], title: values[2], description: values[3], note: values[4], cover: '',
+                    id: this.nextBookmarkId++, user_id: values[0], url: values[1], title: values[2], description: values[3], note: values[4], cover: upload ? '' : values[15] || '', media: upload ? '[]' : values[16] || '[]',
                     highlights: upload ? '[]' : values[5], reminder: upload ? '{}': values[6], important: upload ? 0 : Number(values[7] || 0), lang: upload ? '' : values[8] || '', broken: upload ? 0 : Number(values[9] || 0), duplicate: upload ? null : values[10] || null, created_at: upload ? values[5] : values[11], updated_at: upload ? values[6] : values[12], collection_id: upload ? values[7] : values[13], tags: upload ? values[8] : values[14], removed_at: null
                 }
                 this.bookmarks.push(item)
@@ -146,6 +150,141 @@ const envFor = (db, bucket, queue, scanner = true) => ({
 
 const request = (path, options = {}) => new Request('https://api.example.test' + path, options)
 const cookie = 'rd_session=test-session'
+
+test('cover render endpoint returns a safe, cached WebP screenshot', async () => {
+    const db = new ContentDatabase()
+    const env = envFor(db, new MemoryBucket(), { send: async () => {} }, false)
+    let screenshotOptions
+    env.BROWSER_RENDERING = {
+        quickAction: async (action, options) => {
+            assert.equal(action, 'screenshot')
+            screenshotOptions = options
+            return new Response(Uint8Array.from([82, 73, 70, 70]), { headers: { 'Content-Type': 'image/webp' } })
+        }
+    }
+
+    const target = 'https://public.example.test/page'
+    const renderRequest = request('/render/' + encodeURIComponent(target) + '?format=webp')
+    const rendered = await worker.fetch(renderRequest, env)
+
+    assert.equal(auditRoute(renderRequest), '/render/:source')
+    assert.equal(rendered.status, 200)
+    assert.equal(rendered.headers.get('Content-Type'), 'image/webp')
+    assert.equal(rendered.headers.get('Cache-Control'), 'public, max-age=3600')
+    assert.equal(rendered.headers.get('X-Content-Type-Options'), 'nosniff')
+    assert.deepEqual([...new Uint8Array(await rendered.arrayBuffer())], [82, 73, 70, 70])
+    assert.equal(screenshotOptions.cacheTTL, 3600)
+    assert.deepEqual(screenshotOptions.gotoOptions, { waitUntil: 'load', timeout: 15000 })
+    assert.deepEqual(screenshotOptions.screenshotOptions, { type: 'webp', quality: 75 })
+    assert.equal('allowRequestPattern' in screenshotOptions, false)
+})
+
+test('cover render endpoint proxies image sources without spending a Browser Run request', async t => {
+    const env = envFor(new ContentDatabase(), new MemoryBucket(), { send: async () => {} }, false)
+    const originalFetch = globalThis.fetch
+    const source = 'https://cdn.public.example.test/cover.jpg'
+    const bytes = Uint8Array.from([137, 80, 78, 71])
+    const requested = []
+    globalThis.fetch = async url => {
+        requested.push(new URL(url).href)
+        return new Response(bytes, { headers: { 'Content-Type': 'image/jpeg' } })
+    }
+    t.after(() => { globalThis.fetch = originalFetch })
+    env.BROWSER_RENDERING = { quickAction: async () => assert.fail('direct images should not invoke Browser Run') }
+
+    const response = await worker.fetch(request('/render/' + encodeURIComponent(source) + '?format=webp'), env)
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('Content-Type'), 'image/jpeg')
+    assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [...bytes])
+    assert.deepEqual(requested, [source])
+})
+
+test('cover render endpoint fetches an Open Graph cover before rendering the page', async t => {
+    const env = envFor(new ContentDatabase(), new MemoryBucket(), { send: async () => {} }, false)
+    const originalFetch = globalThis.fetch
+    const source = 'https://public.example.test/page'
+    const image = 'https://cdn.public.example.test/cover.webp'
+    globalThis.fetch = async url => new URL(url).href === image
+        ? new Response(Uint8Array.from([82, 73, 70, 70]), { headers: { 'Content-Type': 'image/webp' } })
+        : new Response(`<html><meta property="og:image" content="${image}"></html>`, { headers: { 'Content-Type': 'text/html' } })
+    t.after(() => { globalThis.fetch = originalFetch })
+    env.BROWSER_RENDERING = { quickAction: async () => assert.fail('Open Graph covers should not invoke Browser Run') }
+
+    const response = await worker.fetch(request('/render/' + encodeURIComponent(source)), env)
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('Content-Type'), 'image/webp')
+    assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [82, 73, 70, 70])
+})
+
+test('cover render endpoint rejects private targets and non-image fallbacks', async () => {
+    const db = new ContentDatabase()
+    const env = envFor(db, new MemoryBucket(), { send: async () => {} }, false)
+    let rendered = false
+    env.BROWSER_RENDERING = { quickAction: async () => {
+        rendered = true
+        return new Response('<html>page</html>', { headers: { 'Content-Type': 'text/html' } })
+    } }
+
+    const blocked = await worker.fetch(request('/render/' + encodeURIComponent('http://127.0.0.1/private')), env)
+    assert.equal(blocked.status, 400)
+    assert.equal((await blocked.json()).error, 'url_not_public')
+    assert.equal(rendered, false)
+
+    env.BROWSER_RENDERING = { quickAction: async () => new Response('rate limited', { status: 429 }) }
+    const rejected = await worker.fetch(request('/render/' + encodeURIComponent('https://public.example.test/page')), env)
+    assert.equal(rejected.status, 502)
+    assert.equal((await rejected.json()).errorMessage, 'Browser Run returned HTTP 429')
+
+    env.BROWSER_RENDERING = { fetch: async () => new Response('<html>page</html>', { headers: { 'Content-Type': 'text/html' } }) }
+    const fallback = await worker.fetch(request('/render/' + encodeURIComponent('https://public.example.test/page')), env)
+    assert.equal(fallback.status, 503)
+    assert.equal((await fallback.json()).error, 'capture_renderer_unavailable')
+
+    const wrongMethod = await worker.fetch(request('/render/' + encodeURIComponent('https://public.example.test/page'), { method: 'POST' }), env)
+    assert.equal(wrongMethod.status, 405)
+})
+
+test('new bookmarks persist multiple media candidates', async () => {
+    const db = new ContentDatabase()
+    const queue = { send: async () => {} }
+    const media = [
+        { link: 'https://public.example.test/cover-a.png', type: 'image' },
+        { link: 'https://public.example.test/cover-b.png', type: 'image' },
+        { link: 'https://public.example.test/cover-c.png', type: 'image' }
+    ]
+    const created = await worker.fetch(request('/v1/raindrop', {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ link: 'https://public.example.test/page', title: 'Page', media })
+    }), envFor(db, new MemoryBucket(), queue, false))
+
+    assert.equal(created.status, 201)
+    const body = await created.json()
+    assert.deepEqual(body.item.media, media)
+    assert.deepEqual(JSON.parse(db.bookmarks[0].media), media)
+})
+
+test('new bookmark media keeps the cover and stays within the 100 item limit', async () => {
+    const db = new ContentDatabase()
+    const queue = { send: async () => {} }
+    const media = Array.from({ length: 100 }, (_, index) => ({
+        link: 'https://public.example.test/media-' + index + '.png', type: 'image'
+    }))
+    const cover = 'https://public.example.test/selected-cover.png'
+    const created = await worker.fetch(request('/v1/raindrop', {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ link: 'https://public.example.test/page', title: 'Page', cover, media })
+    }), envFor(db, new MemoryBucket(), queue, false))
+
+    assert.equal(created.status, 201)
+    const body = await created.json()
+    assert.equal(body.item.media.length, 100)
+    assert.equal(body.item.media.at(-1).link, cover)
+    assert.equal(JSON.parse(db.bookmarks[0].media).length, 100)
+})
 
 test('uploads stay quarantined until the scanner clears them and never expose an R2 URL', async t => {
     const db = new ContentDatabase()
@@ -240,11 +379,15 @@ test('capture tasks are created only by an explicit request and are safety check
     const storedPng = bucket.objects.get(db.contents.find(item => item.kind === 'screenshot').object_key)
     assert.deepEqual([...storedPng.slice(0, 4)], [137, 80, 78, 71])
     assert.equal(db.bookmarks[0].cover, 'https://api.example.test/v1/content/' + db.contents.find(item => item.kind === 'screenshot').id + '/download')
+    assert.equal(JSON.parse(db.bookmarks[0].media)[0].screenshot, true)
 })
 
 test('capture screenshots clear and persist a cover when scanning is disabled', async () => {
     const db = new ContentDatabase()
-    db.bookmarks.push({ id: 1, user_id: 1, url: 'https://public.example.test/page', title: 'Page', description: '', note: '', cover: '', highlights: '[]', collection_id: -1, tags: '[]', created_at: 1, updated_at: 1, removed_at: null })
+    const media = Array.from({ length: 100 }, (_, index) => ({
+        link: 'https://public.example.test/media-' + index + '.png', type: 'image'
+    }))
+    db.bookmarks.push({ id: 1, user_id: 1, url: 'https://public.example.test/page', title: 'Page', description: '', note: '', cover: '', media: JSON.stringify(media), highlights: '[]', collection_id: -1, tags: '[]', created_at: 1, updated_at: 1, removed_at: null })
     const bucket = new MemoryBucket()
     const queue = { messages: [], send: async message => queue.messages.push(message) }
     const env = {
@@ -257,6 +400,10 @@ test('capture screenshots clear and persist a cover when scanning is disabled', 
     const body = await capture.json()
     await worker.queue({ messages: [{ body: queue.messages[0], ack: () => {}, retry: () => assert.fail('unexpected retry') }] }, env)
     assert.equal(db.bookmarks[0].cover, 'https://api.example.test/v1/content/' + body.content.id + '/download')
+    const storedMedia = JSON.parse(db.bookmarks[0].media)
+    assert.equal(storedMedia.length, 100)
+    assert.equal(storedMedia[0].link, db.bookmarks[0].cover)
+    assert.equal(storedMedia[0].screenshot, true)
     const downloaded = await worker.fetch(request('/v1/content/' + body.content.id + '/download', { headers: { Cookie: cookie } }), env)
     assert.equal(downloaded.status, 200)
     assert.deepEqual([...new Uint8Array(await downloaded.arrayBuffer())], [137, 80, 78, 71])
@@ -283,6 +430,7 @@ test('cover uploads store a screenshot content object and update the Bookmark co
 
     await worker.queue({ messages: [{ body: queue.messages[0], ack: () => {}, retry: () => assert.fail('unexpected retry') }] }, env)
     assert.equal(db.bookmarks.find(item => item.id === 1).cover, 'https://api.example.test/v1/content/' + body.content.id + '/download')
+    assert.equal(JSON.parse(db.bookmarks.find(item => item.id === 1).media)[0].screenshot, true)
 })
 
 test('scanner rejection keeps content quarantined and hides it from other users', async t => {

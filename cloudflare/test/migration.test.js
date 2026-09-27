@@ -51,6 +51,10 @@ class MigrationDatabase {
             }
             if (sql.includes('FROM content_objects WHERE id'))
                 return this.contents?.find(item => item.id === values[0]) || null
+            if (sql.includes('SELECT media FROM bookmarks WHERE id')) {
+                const item = this.bookmarks.find(bookmark => bookmark.id === Number(values[0]) && bookmark.user_id === Number(values[1]))
+                return item ? { media: item.media || '[]' } : null
+            }
             if (sql.includes('FROM bookmarks WHERE user_id')) {
                 return this.bookmarks.find(item => item.user_id === Number(values[0]) && item.id === Number(values[1])) || null
             }
@@ -88,8 +92,12 @@ class MigrationDatabase {
                 return { meta: { changes: task ? 1 : 0 } }
             }
             if (sql.includes('UPDATE bookmarks SET cover')) {
-                const item = this.bookmarks.find(item => item.id === Number(values[2]) && item.user_id === Number(values[3]))
-                if (item) item.cover = values[0]
+                const hasMedia = sql.includes('media = ?')
+                const item = this.bookmarks.find(item => item.id === Number(values[hasMedia ? 3 : 2]) && item.user_id === Number(values[hasMedia ? 4 : 3]))
+                if (item) {
+                    item.cover = values[0]
+                    if (hasMedia) item.media = values[1]
+                }
                 return { meta: { changes: item ? 1 : 0 } }
             }
             if (sql.includes('UPDATE content_objects SET status = \'cleared\'')) {
@@ -180,15 +188,15 @@ class MigrationDatabase {
             if (sql.includes('INSERT INTO collections')) {
                 const [userId, title, parentId, createdAt, updatedAt, slug, migrationKey] = values
                 if (this.collections.some(item => item.user_id === Number(userId) && item.migration_key === migrationKey)) return { meta: { changes: 0 } }
-                const item = { id: this.nextCollectionId++, user_id: Number(userId), title, parent_id: parentId, created_at: createdAt, updated_at: updatedAt, slug, migration_key: migrationKey, is_public: 0, removed_at: null }
+                const item = { id: this.nextCollectionId++, user_id: Number(userId), title, parent_id: parentId, created_at: createdAt, updated_at: updatedAt, slug, migration_key: migrationKey, cover: values[7] || '[]', is_public: 0, removed_at: null }
                 this.collections.push(item)
                 return { meta: { last_row_id: item.id, changes: 1 } }
             }
             if (sql.includes('INSERT INTO collection_collaborators')) return { meta: { changes: 1 } }
             if (sql.includes('INSERT INTO bookmarks')) {
-                const [userId, url, title, description, note, highlights, createdAt, updatedAt, collectionId, tags, migrationKey] = values
+                const [userId, url, title, description, note, highlights, createdAt, updatedAt, collectionId, tags, migrationKey, cover, media] = values
                 if (this.bookmarks.some(item => item.user_id === Number(userId) && item.migration_key === migrationKey)) return { meta: { changes: 0 } }
-                const item = { id: this.nextBookmarkId++, user_id: Number(userId), url, title, description, note, highlights, created_at: createdAt, updated_at: updatedAt, collection_id: collectionId, tags, migration_key: migrationKey, cover: '', removed_at: null, change_version: this.nextChangeVersion }
+                const item = { id: this.nextBookmarkId++, user_id: Number(userId), url, title, description, note, highlights, created_at: createdAt, updated_at: updatedAt, collection_id: collectionId, tags, migration_key: migrationKey, cover: cover || '', media: media || '[]', removed_at: null, change_version: this.nextChangeVersion }
                 this.bookmarks.push(item)
                 this.changes.push({ version: this.nextChangeVersion++, changed_at: updatedAt })
                 return { meta: { last_row_id: item.id, changes: 1 } }
@@ -247,6 +255,7 @@ test('migration preflight normalizes source IDs and preserves duplicate-review i
         sourceId: 'collection-1',
         title: 'Imported',
         parentSourceId: null,
+        cover: [],
         slug: ''
     })
     assert.deepEqual(archive.bookmarks[0], {
@@ -257,6 +266,8 @@ test('migration preflight normalizes source IDs and preserves duplicate-review i
         note: '',
         tags: ['migrated'],
         highlights: [{ text: 'keep this' }],
+        cover: '',
+        media: [],
         collectionSourceId: 'collection-1'
     })
     assert.deepEqual(archive.assets, [])
@@ -268,10 +279,13 @@ test('migration preflight requires duplicate decisions and imports with resumabl
     const env = envFor(db)
     const archive = {
         source: 'synthetic',
-        collections: [{ id: 'c1', title: 'Imported collection' }],
+        collections: [{ id: 'c1', title: 'Imported collection', cover: ['https://public.example.test/collection-cover.png'] }],
         bookmarks: [
             { id: 'b1', url: 'https://example.com/existing', title: 'Keep duplicate' },
-            { id: 'b2', url: 'https://example.com/new', title: 'New bookmark', collectionId: 'c1', tags: ['imported'] }
+            { id: 'b2', url: 'https://example.com/new', title: 'New bookmark', collectionId: 'c1', tags: ['imported'], cover: 'https://public.example.test/bookmark-cover.png', media: [
+                { link: 'https://public.example.test/bookmark-cover.png', type: 'image' },
+                { link: 'https://public.example.test/bookmark-alt.png', type: 'image' }
+            ] }
         ]
     }
 
@@ -312,6 +326,13 @@ test('migration preflight requires duplicate decisions and imports with resumabl
     assert.equal(mappingBody.items.find(item => item.sourceId === 'b1').resourceId, 9)
     assert.equal(db.bookmarks.filter(item => item.user_id === 1).length, 2)
     assert.equal(db.collections.length, 1)
+    const importedBookmark = db.bookmarks.find(item => item.migration_key)
+    assert.equal(importedBookmark.cover, 'https://public.example.test/bookmark-cover.png')
+    assert.deepEqual(JSON.parse(importedBookmark.media), [
+        { link: 'https://public.example.test/bookmark-cover.png', type: 'image' },
+        { link: 'https://public.example.test/bookmark-alt.png', type: 'image' }
+    ])
+    assert.deepEqual(JSON.parse(db.collections[0].cover), ['https://public.example.test/collection-cover.png'])
 
     db.tasks[0].status = 'queued'
     db.archives[0].status = 'queued'
@@ -330,7 +351,8 @@ test('migration archives retain inline protected content and map its source iden
             bookmarks: [{ id: 'bookmark-1', url: 'https://example.com/content', title: 'Content bookmark' }],
             attachments: [{ id: 'attachment-1', bookmarkId: 'bookmark-1', filename: 'note.txt', contentType: 'text/plain', data: 'hello' }],
             covers: [{ id: 'cover-1', bookmarkId: 'bookmark-1', data: 'Y292ZXItYnl0ZXM=', encoding: 'base64' }],
-            snapshots: [{ id: 'snapshot-1', bookmarkId: 'bookmark-1', html: '<html>saved</html>' }]
+            snapshots: [{ id: 'snapshot-1', bookmarkId: 'bookmark-1', html: '<html>saved</html>' }],
+            archives: [{ id: 'archive-1', bookmarkId: 'bookmark-1', snapshotId: 'snapshot-1', sourceUrl: 'https://example.com/content', finalUrl: 'https://example.com/content', title: 'Saved', text: 'saved' }]
         })
     }), env)
     assert.equal(preflight.status, 201)
@@ -341,6 +363,7 @@ test('migration archives retain inline protected content and map its source iden
     const mappings = await worker.fetch(request(`/v1/import/${archiveId}/mappings`), env)
     const items = (await mappings.json()).items
     assert.equal(items.filter(item => item.sourceType === 'content').length, 3)
+    assert.equal(items.filter(item => item.sourceType === 'archive').length, 1)
     assert.equal(db.contents.length, 3)
     assert.equal(db.contents.some(item => item.kind === 'snapshot'), true)
     assert.equal(db.contents.some(item => item.kind === 'attachment'), true)
@@ -348,6 +371,12 @@ test('migration archives retain inline protected content and map its source iden
     const contentMappings = items.filter(item => item.sourceType === 'content')
     assert.deepEqual(contentMappings.map(item => item.resourceId).sort(), db.contents.map(item => item.id).sort())
     assert.ok(db.bookmarks[0].cover)
+    const screenshot = db.contents.find(item => item.kind === 'screenshot')
+    assert.deepEqual(JSON.parse(db.bookmarks[0].media), [{
+        link: 'https://api.example.test/v1/content/' + screenshot.id + '/download',
+        type: 'image',
+        screenshot: true
+    }])
 })
 
 test('migration retries resume from a resource key without duplicating a partial write', async () => {

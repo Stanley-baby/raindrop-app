@@ -228,6 +228,30 @@
       }
     },
     {
+      "method": "GET",
+      "path": "/v1/collections/covers/:query",
+      "request": {
+        "method": "GET",
+        "path": "/v1/collections/covers/:query",
+        "headers": {
+          "Cookie": "{{session-cookie}}"
+        }
+      },
+      "responses": [
+        200,
+        401,
+        500
+      ],
+      "cases": {
+        "success": 200,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
       "method": "DELETE",
       "path": "/v1/collections",
       "request": {
@@ -3693,6 +3717,346 @@
         "authentication": null,
         "permission": null,
         "validation": 400,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/duplicates/scan",
+      "request": {
+        "method": "POST",
+        "path": "/v1/duplicates/scan",
+        "headers": {
+          "Cookie": "{{session-cookie}}"
+        },
+        "body": {
+          "mode": "safe"
+        }
+      },
+      "responses": [202, 400, 401, 404, 409, 503, 500],
+      "cases": {
+        "success": 202,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/duplicates",
+      "request": {
+        "method": "GET",
+        "path": "/v1/duplicates",
+        "headers": {
+          "Cookie": "{{session-cookie}}"
+        },
+        "query": {
+          "status": "open",
+          "page": "0",
+          "perpage": "30"
+        }
+      },
+      "responses": [200, 401, 404, 409, 500],
+      "cases": {
+        "success": 200,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": 200,
+        "sync": null
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/duplicates/:id",
+      "request": {
+        "method": "GET",
+        "path": "/v1/duplicates/:id",
+        "headers": {
+          "Cookie": "{{session-cookie}}"
+        }
+      },
+      "responses": [200, 401, 404, 409, 500],
+      "cases": {
+        "success": 404,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/duplicates/:id/resolve",
+      "request": {
+        "method": "POST",
+        "path": "/v1/duplicates/:id/resolve",
+        "headers": {
+          "Cookie": "{{session-cookie}}"
+        },
+        "body": {
+          "action": "dismiss"
+        }
+      },
+      "responses": [200, 400, 401, 404, 409, 500],
+      "cases": {
+        "success": 404,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/duplicates/merge/:id/undo",
+      "request": {
+        "method": "POST",
+        "path": "/v1/duplicates/merge/:id/undo",
+        "headers": {
+          "Cookie": "{{session-cookie}}"
+        },
+        "body": {}
+      },
+      "responses": [200, 401, 404, 409, 500],
+      "cases": {
+        "success": 404,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/raindrop/:id/link-check",
+      "request": {
+        "method": "POST",
+        "path": "/v1/raindrop/:id/link-check",
+        "headers": {
+          "Cookie": "{{session-cookie}}"
+        },
+        "body": {}
+      },
+      "responses": [202, 401, 403, 404, 409, 429, 503, 500],
+      "cases": {
+        "success": 202,
+        "authentication": 401,
+        "permission": {
+          "status": 403,
+          "error": "permission_denied",
+          "mode": "resource"
+        },
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/raindrops/link-check",
+      "request": {
+        "method": "POST",
+        "path": "/v1/raindrops/link-check",
+        "headers": {
+          "Cookie": "{{session-cookie}}"
+        },
+        "body": {"ids": [1]}
+      },
+      "responses": [202, 400, 401, 403, 409, 429, 500],
+      "cases": {
+        "success": 202,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/raindrop/:id/archive",
+      "request": {
+        "method": "GET",
+        "path": "/v1/raindrop/:id/archive",
+        "headers": {"Cookie": "{{session-cookie}}"}
+      },
+      "responses": [200, 401, 404, 500],
+      "cases": {
+        "success": 200,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/raindrop/:id/archive",
+      "request": {
+        "method": "POST",
+        "path": "/v1/raindrop/:id/archive",
+        "headers": {"Cookie": "{{session-cookie}}"},
+        "body": {}
+      },
+      "responses": [202, 400, 401, 403, 404, 503, 500],
+      "cases": {
+        "success": 202,
+        "authentication": 401,
+        "permission": {
+          "status": 403,
+          "error": "permission_denied",
+          "mode": "resource"
+        },
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/raindrop/:id/archive",
+      "request": {
+        "method": "DELETE",
+        "path": "/v1/raindrop/:id/archive",
+        "headers": {"Cookie": "{{session-cookie}}"},
+        "body": {}
+      },
+      "responses": [200, 401, 403, 404, 500],
+      "cases": {
+        "success": 200,
+        "authentication": 401,
+        "permission": {
+          "status": 403,
+          "error": "permission_denied",
+          "mode": "resource"
+        },
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/archive/:id/view",
+      "request": {
+        "method": "GET",
+        "path": "/v1/archive/:id/view",
+        "headers": {"Cookie": "{{session-cookie}}"}
+      },
+      "responses": [200, 401, 404, 409, 503, 500],
+      "cases": {
+        "success": 404,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/archive/:id/assets/:assetId",
+      "request": {
+        "method": "GET",
+        "path": "/v1/archive/:id/assets/:assetId",
+        "headers": {"Cookie": "{{session-cookie}}"}
+      },
+      "responses": [200, 401, 404, 409, 503, 500],
+      "cases": {
+        "success": 404,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/archive/:id/download",
+      "request": {
+        "method": "GET",
+        "path": "/v1/archive/:id/download",
+        "headers": {"Cookie": "{{session-cookie}}"}
+      },
+      "responses": [200, 401, 404, 409, 503, 500],
+      "cases": {
+        "success": 404,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/archive/:id/publish",
+      "request": {
+        "method": "POST",
+        "path": "/v1/archive/:id/publish",
+        "headers": {"Cookie": "{{session-cookie}}"},
+        "body": {}
+      },
+      "responses": [200, 401, 403, 404, 409, 500],
+      "cases": {
+        "success": 404,
+        "authentication": 401,
+        "permission": {
+          "status": 403,
+          "error": "permission_denied",
+          "mode": "resource"
+        },
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/archive/:id/publish",
+      "request": {
+        "method": "DELETE",
+        "path": "/v1/archive/:id/publish",
+        "headers": {"Cookie": "{{session-cookie}}"},
+        "body": {}
+      },
+      "responses": [200, 401, 403, 404, 500],
+      "cases": {
+        "success": 404,
+        "authentication": 401,
+        "permission": {
+          "status": 403,
+          "error": "permission_denied",
+          "mode": "resource"
+        },
+        "validation": null,
+        "pagination": null,
+        "sync": null
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/archive/quota",
+      "request": {
+        "method": "GET",
+        "path": "/v1/archive/quota",
+        "headers": {"Cookie": "{{session-cookie}}"}
+      },
+      "responses": [200, 401, 500],
+      "cases": {
+        "success": 200,
+        "authentication": 401,
+        "permission": null,
+        "validation": null,
         "pagination": null,
         "sync": null
       }

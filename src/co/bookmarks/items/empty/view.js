@@ -7,6 +7,7 @@ import { target } from '~target'
 
 import Button from '~co/common/button'
 import Icon from '~co/common/icon'
+import Preloader from '~co/common/preloader'
 
 export default class BookmarksEmptyView extends React.PureComponent {
     refresh = (e)=>{
@@ -19,6 +20,9 @@ export default class BookmarksEmptyView extends React.PureComponent {
         let content = null
 
         if (spaceId == -101) return null
+
+        if (status.main == 'loading')
+            content = <Preloader />
 
         switch(status.main) {
             case 'empty':{

@@ -5,6 +5,22 @@ import getScreenshotUri from '~data/modules/format/screenshot'
 import getFaviconUri from '~data/modules/format/favicon'
 import size from './size'
 import Preloader from '~co/common/preloader'
+import { RENDER_URL } from '~data/constants/app'
+
+const coverRetryInterval = 12000
+let coverRetryQueue = Promise.resolve()
+let nextCoverRetryAt = 0
+// ponytail: retries are serialized per tab; cross-tab/account coordination requires a shared queue.
+const queueCoverRetry = () => {
+    const retry = coverRetryQueue.then(() => new Promise(resolve => {
+        const now = Date.now()
+        const retryAt = Math.max(now + coverRetryInterval, nextCoverRetryAt)
+        nextCoverRetryAt = retryAt + coverRetryInterval
+        setTimeout(resolve, retryAt - now)
+    }))
+    coverRetryQueue = retry.catch(() => {})
+    return retry
+}
 
 //cache thumb/screenshot uri
 const thumbs = {}
@@ -43,7 +59,23 @@ export default class BookmarkItemCover extends React.PureComponent {
     }
 
     state = {
-        loaded: this.props.indicator ? false : true
+        loaded: this.props.indicator ? false : true,
+        retryVersion: 0
+    }
+
+    componentDidMount() {
+        this.mounted = true
+    }
+
+    componentWillUnmount() {
+        this.mounted = false
+    }
+
+    componentDidUpdate(previousProps) {
+        if (this.retryQueued && (previousProps.cover !== this.props.cover || previousProps.link !== this.props.link)) {
+            this.retryQueued = false
+            this.setState({ retryVersion: 0 })
+        }
     }
 
     onImageLoadStart = ()=>
@@ -52,8 +84,22 @@ export default class BookmarkItemCover extends React.PureComponent {
     onImageLoadSuccess = ()=>
         this.setState({ loaded: true })
 
+    onImageError = event => {
+        const source = event.currentTarget.currentSrc || event.currentTarget.src || ''
+        const { indicator } = this.props
+        if (!this.retryQueued && RENDER_URL && source.startsWith(`${RENDER_URL}/`)) {
+            this.retryQueued = true
+            if (indicator) this.setState({ loaded: false })
+            queueCoverRetry().then(() => {
+                if (this.mounted)
+                    this.setState(state => ({ retryVersion: state.retryVersion + 1 }))
+            })
+        } else if (indicator) this.onImageLoadSuccess()
+    }
+
     renderImage = ()=>{
         const { cover, view, link, domain, coverSize, indicator, ...etc } = this.props
+        const retry = this.state.retryVersion ? `&rd-cover-retry=${this.state.retryVersion}` : ''
         let { width, height, ar } = size(view, coverSize) //use height only for img element
         let uri
 
@@ -87,7 +133,7 @@ export default class BookmarkItemCover extends React.PureComponent {
         return (
             <>
                 <source
-                    srcSet={uri && `${uri}?mode=${mode}&fill=solid&format=webp&width=${width||''}&ar=${ar||''}&dpr=${dpr[view]||dpr.default}`}
+                    srcSet={uri && `${uri}?mode=${mode}&fill=solid&format=webp&width=${width||''}&ar=${ar||''}&dpr=${dpr[view]||dpr.default}${retry}`}
                     type='image/webp' />
 
                 <img 
@@ -98,11 +144,11 @@ export default class BookmarkItemCover extends React.PureComponent {
                     height={height}
                     alt=' '
                     {...etc}
-                    src={uri && `${uri}?mode=${mode}&fill=solid&width=${width||''}&ar=${ar||''}&dpr=${dpr[view]||dpr.default}`}
+                    src={uri && `${uri}?mode=${mode}&fill=solid&width=${width||''}&ar=${ar||''}&dpr=${dpr[view]||dpr.default}${retry}`}
                     //type='image/jpeg'
                     onLoadStart={indicator ? this.onImageLoadStart : undefined}
                     onLoad={indicator ? this.onImageLoadSuccess : undefined}
-                    onError={indicator && uri ? this.onImageLoadSuccess : undefined} />
+                    onError={uri ? this.onImageError : undefined} />
             </>
         )
     }

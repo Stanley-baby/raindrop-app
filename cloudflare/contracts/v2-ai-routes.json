@@ -9,6 +9,12 @@
         },
         {
             "method": "GET",
+            "path": "/v2/ai/models",
+            "authentication": "required",
+            "responses": [200, 401]
+        },
+        {
+            "method": "GET",
             "path": "/v2/ai/provider",
             "authentication": "required",
             "responses": [200, 401]
@@ -54,6 +60,12 @@
             "path": "/v2/ai/description-draft",
             "authentication": "required",
             "responses": [200, 400, 401, 404, 409, 503]
+        },
+        {
+            "method": "POST",
+            "path": "/v2/ai/prompt-optimize",
+            "authentication": "required",
+            "responses": [200, 400, 401, 409, 502, 503]
         },
         {
             "method": "GET",

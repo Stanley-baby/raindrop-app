@@ -116,7 +116,7 @@ class MemoryDatabase {
             if (sql.includes('INSERT INTO bookmarks')) {
                 const modern = sql.includes('description')
                 const bookmark = modern
-                    ? { id: this.bookmarks.length + 1, user_id: values[0], url: values[1], title: values[2], description: values[3], note: values[4], highlights: values[5], reminder: values[6], important: Number(values[7] || 0), lang: values[8] || '', broken: Number(values[9] || 0), duplicate: values[10] || null, created_at: values[11], updated_at: values[12], collection_id: values[13], tags: values[14], cover: '', type: 'link', removed_at: null, removed_batch: null, change_version: this.nextChangeVersion }
+                    ? { id: this.bookmarks.length + 1, user_id: values[0], url: values[1], title: values[2], description: values[3], note: values[4], highlights: values[5], reminder: values[6], important: Number(values[7] || 0), lang: values[8] || '', broken: Number(values[9] || 0), duplicate: values[10] || null, created_at: values[11], updated_at: values[12], collection_id: values[13], tags: values[14], cover: values[15] || '', media: values[16] || '[]', type: 'link', removed_at: null, removed_batch: null, change_version: this.nextChangeVersion }
                     : { id: this.bookmarks.length + 1, user_id: values[0], url: values[1], title: values[2], description: '', note: '', created_at: values[3], updated_at: values[4], collection_id: values[5], tags: values[6], highlights: '[]', cover: '', important: 0, type: 'link', removed_at: null, removed_batch: null, change_version: this.nextChangeVersion }
                 this.bookmarks.push(bookmark)
                 this.changes.push({ version: this.nextChangeVersion++, user_id: bookmark.user_id, bookmark_id: bookmark.id, changed_at: bookmark.updated_at })
@@ -150,20 +150,20 @@ class MemoryDatabase {
             }
             if (sql.includes('UPDATE bookmarks SET url')) {
                 const modern = sql.includes('description = ?')
-                const bookmark = this.bookmarks.find(item => item.id === values[modern ? 16 : 7] && item.user_id === values[modern ? 17 : 8])
+                const bookmark = this.bookmarks.find(item => item.id === values[modern ? 17 : 7] && item.user_id === values[modern ? 18 : 8])
                 Object.assign(bookmark, modern
-                    ? { url: values[0], title: values[1], description: values[2], note: values[3], cover: values[4], collection_id: values[5], tags: values[6], highlights: values[7], reminder: values[8], important: Number(values[9] || 0), lang: values[10] || '', broken: Number(values[11] || 0), duplicate: values[12] || null, removed_at: values[13], removed_batch: values[14], updated_at: values[15], change_version: this.nextChangeVersion }
+                    ? { url: values[0], title: values[1], description: values[2], note: values[3], cover: values[4], media: values[5], collection_id: values[6], tags: values[7], highlights: values[8], reminder: values[9], important: Number(values[10] || 0), lang: values[11] || '', broken: Number(values[12] || 0), duplicate: values[13] || null, removed_at: values[14], removed_batch: values[15], updated_at: values[16], change_version: this.nextChangeVersion }
                     : { url: values[0], title: values[1], collection_id: values[2], tags: values[3], highlights: values[4], removed_at: values[5], updated_at: values[6], change_version: this.nextChangeVersion })
                 this.changes.push({ version: this.nextChangeVersion++, user_id: bookmark.user_id, bookmark_id: bookmark.id, changed_at: bookmark.updated_at })
                 return { meta: { changes: 1 } }
             }
             if (sql.includes('UPDATE collections SET title = ?')) {
                 const modern = sql.includes('view = ?')
-                const collection = this.collections.find(item => item.id === values[modern ? 8 : 5] && item.user_id === values[modern ? 9 : 6])
+                const collection = this.collections.find(item => item.id === values[modern ? 9 : 6] && item.user_id === values[modern ? 10 : 7])
                 if (!collection) return { meta: { changes: 0 } }
                 Object.assign(collection, modern
-                    ? { title: values[0], parent_id: values[1], slug: values[2], is_public: values[3], view: values[4], expanded: Number(values[5] || 0), sort: Number(values[6] || 0), updated_at: values[7] }
-                    : { title: values[0], parent_id: values[1], slug: values[2], is_public: values[3], updated_at: values[4] })
+                    ? { title: values[0], parent_id: values[1], slug: values[2], is_public: values[3], cover: values[4], view: values[5], expanded: Number(values[6] || 0), sort: Number(values[7] || 0), updated_at: values[8] }
+                    : { title: values[0], parent_id: values[1], slug: values[2], is_public: values[3], cover: values[4], updated_at: values[5] })
                 return { meta: { changes: 1 } }
             }
             if (sql.includes('UPDATE collections SET') && sql.includes('WHERE user_id = ?') && (sql.includes('view = ?') || sql.includes('expanded = ?'))) {

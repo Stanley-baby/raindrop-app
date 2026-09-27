@@ -5,6 +5,8 @@ import { bookmark, tags, makeHighlights, makeIsSelected, makeHighlight, makeCrea
 import * as bookmarksActions from '~data/actions/bookmarks'
 import { copyText } from '~modules/browser'
 import { openTab } from '~target'
+import t from '~t'
+import { Alert as showAlert, Error as showError } from '~co/overlay/dialog'
 
 import View from './view'
 import Contextmenu from './contextmenu'
@@ -26,7 +28,8 @@ class BookmarkItem extends React.Component {
     }
 
     state = {
-        menu: false
+        menu: false,
+        rechecking: false
     }
 
     handlers = {
@@ -70,6 +73,27 @@ class BookmarkItem extends React.Component {
         onReparseClick: ()=>
             this.props.actions.oneReparse(this.props.item._id),
 
+        onRecheckClick: ()=>{
+            this.setState({ menu: false, rechecking: true })
+            this.props.actions.oneRecheck(
+                this.props.item._id,
+                result => {
+                    this.setState({ rechecking: false })
+                    const message = {
+                        ok: 'linkCheckReachable',
+                        broken: 'linkCheckConfirmedBroken',
+                        uncertain: 'linkCheckUncertain',
+                        skipped: 'linkCheckSkipped'
+                    }[result?.state] || 'linkCheckUncertain'
+                    showAlert(t.s('linkCheckSucceeded'), { description: t.s(message) })
+                },
+                error => {
+                    this.setState({ rechecking: false })
+                    showError(error)
+                }
+            )
+        },
+
         onContextMenu: (e)=>{
             e.preventDefault()
             e.target.focus()
@@ -101,6 +125,7 @@ class BookmarkItem extends React.Component {
                 <View 
                     {...item}
                     {...props}
+                    rechecking={this.state.rechecking}
                     {...this.handlers}
                     />
 
@@ -108,6 +133,7 @@ class BookmarkItem extends React.Component {
                     <Contextmenu 
                         {...item}
                         {...props}
+                        rechecking={this.state.rechecking}
                         {...this.handlers} />
                 ) : null}
             </>

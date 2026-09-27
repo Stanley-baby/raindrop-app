@@ -9,7 +9,7 @@ import Icon, { Avatar } from '~co/common/icon'
 import Path from './path'
 
 export default function BookmarkItemInfo(props) {
-    const { className='', creatorRef, domain, type, link, created, reparse, collectionId, spaceId, important, broken, duplicate, cache, highlight, fileType } = props
+    const { className='', creatorRef, domain, type, link, created, reparse, rechecking, collectionId, spaceId, important, broken, brokenReason, brokenHttpStatus, brokenCheckedAt, duplicate, cache, highlight, fileType } = props
 
     return (
         <div className={s.info+' '+className}>
@@ -30,8 +30,12 @@ export default function BookmarkItemInfo(props) {
                 </section>
             ) : null}
 
-            {broken ? (
-                <section><Icon name='broken' size='micro' /></section>
+            {rechecking ? (
+                <section><Icon name='progress' size='micro' title={t.s('recheckingLink')} /></section>
+            ) : broken ? (
+                <section title={[brokenReason, brokenHttpStatus && 'HTTP ' + brokenHttpStatus, brokenCheckedAt].filter(Boolean).join(' · ')}>
+                    <Icon name='broken' size='micro' />
+                </section>
             ) : null}
 
             {duplicate ? (

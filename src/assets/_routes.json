@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "include": [
+    "/pb/*",
+    "/account/login"
+  ],
+  "exclude": []
+}

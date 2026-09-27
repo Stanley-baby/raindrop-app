@@ -1,0 +1,49 @@
+body {
+    color: #23262b;
+    background: #f6f8fa;
+    font: 16px/1.5 system-ui, sans-serif;
+}
+
+main {
+    box-sizing: border-box;
+    width: min(100% - 32px, 560px);
+    margin: 48px auto;
+    padding: 32px;
+    background: #fff;
+    border: 1px solid #d8dee4;
+    border-radius: 12px;
+}
+
+h1 { margin-top: 0; font-size: 1.5rem; }
+label { display: block; margin: 20px 0 6px; font-weight: 600; }
+input {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #8c959f;
+    border-radius: 6px;
+    font: inherit;
+}
+button {
+    margin-top: 12px;
+    padding: 10px 16px;
+    color: #fff;
+    background: #0969da;
+    border: 0;
+    border-radius: 6px;
+    font: inherit;
+    cursor: pointer;
+}
+button:disabled { opacity: .6; cursor: wait; }
+#status { min-height: 1.5em; }
+#status[data-state='error'] { color: #cf222e; }
+#status[data-state='success'] { color: #1a7f37; }
+.hint { color: #57606a; font-size: .9rem; }
+#open-app { display: inline-block; margin-bottom: 8px; }
+
+@media (prefers-color-scheme: dark) {
+    body { color: #e6edf3; background: #0d1117; }
+    main { background: #161b22; border-color: #30363d; }
+    input { color: inherit; background: #0d1117; border-color: #6e7681; }
+    .hint { color: #8b949e; }
+}
