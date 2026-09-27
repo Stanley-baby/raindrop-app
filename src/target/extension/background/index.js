@@ -6,7 +6,9 @@ import omnibox from './omnibox'
 import runtime from './runtime'
 import highlights from './highlights'
 import fixSafariProfileCookies from './fix-safari-profile-cookies'
+import { watchRuntimeDomainChanges } from '~target'
 
+watchRuntimeDomainChanges()
 action()
 commands()
 contextMenus()

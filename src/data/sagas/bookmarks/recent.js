@@ -1,9 +1,9 @@
-import { call, put, takeLatest, delay } from 'redux-saga/effects'
+import { call, put, takeLatest, delay, select, take } from 'redux-saga/effects'
 import Api from '../../modules/api'
 import { 
 	RECENT_SEARCH_LOAD_REQ, RECENT_SEARCH_LOAD_SUCCESS, RECENT_SEARCH_LOAD_ERROR,
 	RECENT_SEARCH_CLEAR_REQ, RECENT_SEARCH_CLEAR_SUCCESS, RECENT_SEARCH_CLEAR_ERROR,
-	SPACE_LOAD_PRE, SPACE_LOAD_SUCCESS
+	SPACE_LOAD_PRE, SPACE_LOAD_SUCCESS, SPACE_LOAD_ERROR
 } from '../../constants/bookmarks'
 
 //Requests
@@ -19,9 +19,21 @@ export default function* () {
 
 //Search Once
 let _once = false
-function* searchLoadOnce() {
+function* searchLoadOnce({ spaceId }={}) {
 	if (_once) return
 	_once = true
+
+	if (typeof spaceId != 'undefined') {
+		const ready = yield select(state=>{
+			const status = state.bookmarks?.spaces?.[spaceId]?.status?.main
+			return status == 'loaded' || status == 'empty' || status == 'error' || status == 'notFound'
+		})
+		if (!ready)
+			while (true) {
+				const action = yield take([SPACE_LOAD_SUCCESS, SPACE_LOAD_ERROR])
+				if (String(action.spaceId) == String(spaceId)) break
+			}
+	}
 
 	yield delay(1000)
 	yield searchLoad({})

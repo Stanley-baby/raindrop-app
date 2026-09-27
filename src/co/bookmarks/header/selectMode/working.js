@@ -17,6 +17,7 @@ export default class BookmarksHeaderSelectModeLoading extends React.Component {
         screenshot: t.s('clickToMakeScreenshot'),
         removeTags: t.s('removeTags'),
         reparse: t.s('refreshPreview'),
+        recheck: t.s('recheckingLink'),
         remove: t.s('remove')
     }
 

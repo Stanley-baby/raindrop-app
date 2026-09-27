@@ -24,7 +24,9 @@ const requestData = item => ({
 export default function BookmarkEditFormAi({ item, onChange, onLoadingChange, status }) {
     const enabled = useSelector(state => state.config.ai_assistant || state.config.ai_suggestions)
     const notePrompt = useSelector(state => state.config.ai_note_prompt)
-    const noteThinking = useSelector(state => state.config.ai_note_thinking)
+    const noteThinking = useSelector(state => typeof state.config.ai_thinking_enabled === 'boolean'
+        ? state.config.ai_thinking_enabled : state.config.ai_note_thinking)
+    const thinkingLevel = useSelector(state => state.config.ai_thinking_level || 'medium')
     const note = String(item.note || '')
     const payload = requestData(item)
     const [loading, setLoading] = useState(false)
@@ -56,7 +58,7 @@ export default function BookmarkEditFormAi({ item, onChange, onLoadingChange, st
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...payload, language: t.currentLang, field: 'note', notePrompt, thinking: noteThinking })
+                body: JSON.stringify({ ...payload, language: t.currentLang, field: 'note', notePrompt, thinking: noteThinking, thinkingLevel })
             })
             const body = await readJson(response)
             if (!response.ok) throw new Error(body.errorMessage || 'AI is unavailable')
@@ -77,7 +79,7 @@ export default function BookmarkEditFormAi({ item, onChange, onLoadingChange, st
             setLoading(false)
             onLoadingChange?.(false)
         }
-    }, [lastGenerated, loading, note, notePrompt, noteThinking, onChange, onLoadingChange, payload, status])
+    }, [lastGenerated, loading, note, notePrompt, noteThinking, onChange, onLoadingChange, payload, status, thinkingLevel])
 
     const commitDraft = useCallback(mode => {
         if (!draft) return

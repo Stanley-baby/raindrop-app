@@ -351,7 +351,8 @@ test('migration archives retain inline protected content and map its source iden
             bookmarks: [{ id: 'bookmark-1', url: 'https://example.com/content', title: 'Content bookmark' }],
             attachments: [{ id: 'attachment-1', bookmarkId: 'bookmark-1', filename: 'note.txt', contentType: 'text/plain', data: 'hello' }],
             covers: [{ id: 'cover-1', bookmarkId: 'bookmark-1', data: 'Y292ZXItYnl0ZXM=', encoding: 'base64' }],
-            snapshots: [{ id: 'snapshot-1', bookmarkId: 'bookmark-1', html: '<html>saved</html>' }]
+            snapshots: [{ id: 'snapshot-1', bookmarkId: 'bookmark-1', html: '<html>saved</html>' }],
+            archives: [{ id: 'archive-1', bookmarkId: 'bookmark-1', snapshotId: 'snapshot-1', sourceUrl: 'https://example.com/content', finalUrl: 'https://example.com/content', title: 'Saved', text: 'saved' }]
         })
     }), env)
     assert.equal(preflight.status, 201)
@@ -362,6 +363,7 @@ test('migration archives retain inline protected content and map its source iden
     const mappings = await worker.fetch(request(`/v1/import/${archiveId}/mappings`), env)
     const items = (await mappings.json()).items
     assert.equal(items.filter(item => item.sourceType === 'content').length, 3)
+    assert.equal(items.filter(item => item.sourceType === 'archive').length, 1)
     assert.equal(db.contents.length, 3)
     assert.equal(db.contents.some(item => item.kind === 'snapshot'), true)
     assert.equal(db.contents.some(item => item.kind === 'attachment'), true)

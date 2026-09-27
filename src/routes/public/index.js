@@ -3,13 +3,21 @@ import { useParams } from 'react-router-dom'
 import { Helmet } from 'react-helmet'
 import { API_ORIGIN } from '~data/constants/app'
 
+const publicCollectionPath = resource => {
+    if (process.env.RUNTIME_DOMAIN_MODE !== 'true')
+        return '/public/' + encodeURIComponent(resource || '')
+
+    const match = String(resource || '').match(/^(.*)-(\d+)$/)
+    return match ? '/v1/public/collections/' + match[2] + '/' + encodeURIComponent(match[1]) : '/v1/public/collections/0'
+}
+
 export default function PublicCollection() {
     const { resource } = useParams()
     const [state, setState] = useState({ loading: true, error: false, payload: null })
 
     useEffect(() => {
         let active = true
-        fetch(API_ORIGIN + '/public/' + encodeURIComponent(resource || ''), { credentials: 'omit' })
+        fetch(API_ORIGIN + publicCollectionPath(resource), { credentials: 'omit' })
             .then(response => response.ok ? response.json() : Promise.reject(new Error('not_found')))
             .then(payload => active && setState({ loading: false, error: false, payload }))
             .catch(() => active && setState({ loading: false, error: true, payload: null }))

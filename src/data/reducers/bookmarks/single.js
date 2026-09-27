@@ -224,6 +224,7 @@ export default function(state, action) {
 				next.collectionRequestId = action.requestId
 				next.collections = []
 				next.new_collections = []
+				next.create_suggestions = []
 				next.collection_recommendations = []
 				next.collection_status = ''
 				next.collection_source = ''
@@ -241,6 +242,7 @@ export default function(state, action) {
 				next.tags = []
 				next.new_tags = []
 				next.new_collections = []
+				next.create_suggestions = []
 				next.collection_recommendations = []
 				next.suggestion_status = ''
 				next.suggestion_source = ''
@@ -252,7 +254,7 @@ export default function(state, action) {
 		}
 
 		case BOOKMARK_SUGGESTED_FIELDS:{
-			const { link, collections=[], tags=[], new_tags=[], new_collections=[], collection_recommendations=[], suggestion_status='', suggestion_source='', collection_status='', tags_status='' } = action
+			const { link, collections=[], tags=[], new_tags=[], new_collections=[], create_suggestions=[], collection_recommendations=[], suggestion_status='', suggestion_source='', collection_status='', tags_status='' } = action
 			const current = state.getIn(['suggestedFields', link]) || {}
 			const field = action.field || 'all'
 			const requestKeys = field == 'collection' ? [current.collectionRequestId] : field == 'tags' ? [current.tagsRequestId] : [current.requestId, current.collectionRequestId, current.tagsRequestId]
@@ -263,6 +265,7 @@ export default function(state, action) {
 			if (field == 'collection') Object.assign(next, {
 				collections,
 				new_collections,
+				create_suggestions,
 				collection_recommendations,
 				collection_status: collection_status || suggestion_status,
 				collection_source: action.collection_source || suggestion_source
@@ -279,6 +282,7 @@ export default function(state, action) {
 				tags,
 				new_tags,
 				new_collections,
+				create_suggestions,
 				collection_recommendations,
 				suggestion_status,
 				suggestion_source,

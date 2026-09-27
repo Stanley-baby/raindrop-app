@@ -1,6 +1,7 @@
 import _ from 'lodash'
 import { call, put, takeEvery, select } from 'redux-saga/effects'
 import Api from '../../modules/api'
+import dedupeGet from '../../modules/dedupeGet'
 import { getUrl } from '../../helpers/bookmarks'
 
 import {
@@ -35,7 +36,7 @@ function* preLoadSpace(action) {
 	if (action.ignore) return
 
 	try{
-		const { lastAction, version } = yield call(Api.get, `collection/${parseInt(action.spaceId)}/lastAction`)
+		const { lastAction, version } = yield call(dedupeGet, `collection/${parseInt(action.spaceId)}/lastAction`)
 
 		yield put({
 			...action,
@@ -93,7 +94,7 @@ function* viewToggle({ spaceId, field }) {
 	yield viewConfig({ spaceId, raindrops_hide })
 }
 
-function* viewConfig({ spaceId, ...config }) {
+function* viewConfig({ ...config }) {
 	yield put({
 		type: USER_UPDATE_REQ,
 		user: {

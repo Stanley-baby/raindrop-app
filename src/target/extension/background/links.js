@@ -67,7 +67,7 @@ async function download() {
             timeout: 0
         })
     } catch(e) {
-        console.error(e)
+        // ponytail: best-effort link sync stays silent offline; inspect API logs for diagnostics.
     }
 
     if (!text) return;

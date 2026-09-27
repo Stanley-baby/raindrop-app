@@ -16,12 +16,16 @@ The Worker writes one redacted row to `alerts` for these operational events:
 | `rate_limit_exceeded` | A client or User exceeded a route limit | Use `retryAfter`/`Retry-After`; raise the limit only after checking capacity. |
 | `usage_quota_threshold` | A User crossed 80% of daily storage/work quota | Confirm the configured quota and current demand. |
 | `usage_quota_exceeded` | A User reached the daily quota | The response supplies `retryAt`; no data is discarded. |
+| `ai_gateway_low_balance` | AI Gateway credit balance is at or below the configured threshold | Top up or raise the threshold after checking the live balance and Gateway logs. |
 | `metadata_enrichment_failed` | Metadata task reached dead-letter | Inspect the safe task failure and retry explicitly when the URL is healthy. |
+| `link_check_failed` | Link-check task reached dead-letter | Verify the Queue and public URL probe path, then retry the task. |
 | `capture_failed` | Dynamic Capture task reached dead-letter | Verify the Browser binding and Fetchable URL, then retry the task. |
+| `archive_capture_failed` | Web Archive task reached dead-letter | Verify the Browser binding, R2 bucket, scanner, and public URL checks, then retry the task. |
 | `attachment_scan_failed` | Attachment safety task reached dead-letter | Keep the content quarantined until the scanner is healthy. |
 | `migration_import_failed` | Migration task reached dead-letter | Review the archive status and retry after fixing the reported cause. |
 | `backup_failed` | A private Backup or External Copy failed | Check the destination/storage binding and retry the Backup. |
 | `task_enqueue_failed` | A Queue message could not be published | Check Queue binding health before retrying the originating request. |
+| `duplicate_scan_failed` | Duplicate review scan exhausted its retry policy | Inspect the task failure, correct the configured scan limit or Queue issue, then retry the task. |
 
 Alert metadata contains only the event kind, severity, route, request ID,
 resource/task IDs, numeric counters, and safe error codes. It must never contain

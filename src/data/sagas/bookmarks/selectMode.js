@@ -1,4 +1,4 @@
-import { call, put, takeEvery, select, all } from 'redux-saga/effects'
+import { call, put, takeEvery, select, all, delay } from 'redux-saga/effects'
 import _ from 'lodash-es'
 import Api from '../../modules/api'
 import ApiError from '../../modules/error'
@@ -16,9 +16,11 @@ import {
 	SELECT_MODE_MOVE_SELECTED,
 	SELECT_MODE_REMOVETAGS_SELECTED,
 	SELECT_MODE_REPARSE_SELECTED,
+	SELECT_MODE_RECHECK_SELECTED,
 	SELECT_MODE_FAIL_SELECTED,
 
 	SELECT_MODE_DISABLE,
+	SPACE_REFRESH_REQ,
 
 	BOOKMARK_UPDATE_SUCCESS,
 	BOOKMARK_REMOVE_SUCCESS,
@@ -107,8 +109,63 @@ export default function* () {
 		})
 	)
 
+	//Recheck selected
+	yield takeEvery(SELECT_MODE_RECHECK_SELECTED, recheckSelected)
+
 	//Remove selected
 	yield takeEvery(SELECT_MODE_REMOVE_SELECTED, removeBookmarks)
+}
+
+function* recheckSelected({ onSuccess, onFail }) {
+	const summary = { reachable: 0, broken: 0, uncertain: 0, skipped: 0, failed: 0 }
+	try {
+		const state = yield select()
+		const ids = [...new Set(selectedBookmarkGroups(state.bookmarks).flatMap(([collectionId, group]) =>
+			state.bookmarks.selectMode.all ? state.bookmarks.spaces[collectionId]?.ids || [] : group
+		))]
+		for (let offset = 0; offset < ids.length; offset += 50) {
+			const result = yield call(Api.post, 'raindrops/link-check', { ids: ids.slice(offset, offset + 50) })
+			summary.skipped += (result.skipped || []).length
+			for (const task of result.tasks || []) {
+				let completed = false
+				for (let attempt = 0; attempt < 30; attempt++) {
+					try {
+						yield delay(1000)
+						const current = yield call(Api.get, `tasks/${encodeURIComponent(task.taskId)}`)
+						const status = current.task?.status
+						if (status === 'succeeded') {
+							const outcome = current.task?.metadata?.state
+							if (outcome === 'ok') summary.reachable++
+							else if (outcome === 'broken') summary.broken++
+							else if (outcome === 'uncertain') summary.uncertain++
+							else summary.skipped++
+							completed = true
+							break
+						}
+						if (['dead_letter', 'failed'].includes(status)) {
+							summary.failed++
+							completed = true
+							break
+						}
+					} catch {
+						summary.failed++
+						completed = true
+						break
+					}
+				}
+				if (!completed) summary.failed++
+			}
+		}
+		if (summary.failed)
+			yield put({ type: SELECT_MODE_FAIL_SELECTED })
+		else
+			yield put({ type: SELECT_MODE_DISABLE })
+		yield put({ type: SPACE_REFRESH_REQ, spaceId: state.bookmarks.selectMode.spaceId })
+		if (typeof onSuccess === 'function') onSuccess(summary)
+	} catch (error) {
+		if (typeof onFail === 'function') onFail(error)
+		yield put({ type: SELECT_MODE_FAIL_SELECTED, error })
+	}
 }
 
 const updateBookmarks = ({validate, set, mutate}) => (

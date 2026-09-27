@@ -8,10 +8,11 @@ const WebpackPwaManifest = require('webpack-pwa-manifest')
 const CopyPlugin = require('copy-webpack-plugin')
 
 module.exports = (env={}, args={}) => {
-    const buildEnvironment = resolveEnvironment(env)
+    const buildOptions = { ...env, runtimeDomainMode: env.environment === 'selfhosted' }
+    const buildEnvironment = resolveEnvironment(buildOptions)
 
     return merge(
-        common(env, args),
+        common(buildOptions, args),
         {
             output: {
                 path: path.resolve(__dirname, '..', 'dist', 'web', buildEnvironment.name == 'local' ? 'dev' : buildEnvironment.name == 'production' ? 'prod' : buildEnvironment.name),
@@ -53,7 +54,12 @@ module.exports = (env={}, args={}) => {
                         { from: 'assets/sw.js', to: 'sw.js' },
                         { from: 'assets/robots.txt', to: 'robots.txt' },
                         { from: 'assets/_headers', to: '_headers', toType: 'file' },
-                        { from: 'assets/_redirects', to: '_redirects', toType: 'file' }
+                        { from: 'assets/_redirects', to: '_redirects', toType: 'file' },
+                        {
+                            from: buildEnvironment.runtimeDomainMode ? 'assets/_routes.selfhosted.json' : 'assets/_routes.json',
+                            to: '_routes.json',
+                            toType: 'file'
+                        }
                     ]
                 }),
 

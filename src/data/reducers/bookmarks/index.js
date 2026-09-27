@@ -66,7 +66,7 @@ const initialState = Immutable({
 	elements: {},
 	meta: {},
 	html: {},
-	suggestedFields: {}, //{ urlString: { collections: [], tags: [], new_tags: [], new_collections: [], collection_recommendations: [] } }
+	suggestedFields: {}, //{ urlString: { collections: [], tags: [], new_tags: [], new_collections: [], create_suggestions: [], collection_recommendations: [] } }
 
 	selectMode: blankSelectMode
 })

@@ -51,7 +51,7 @@ export default function BookmarkEditFormTagsSuggested({ item, onTagClick, select
         <div
             className={s.suggested}
             data-expanded={expanded}
-            title={t.s('suggestedTags')}
+            title={[t.s('suggestedTags'), t.s('aiSuggestionContextHelp')].join(' · ')}
             onMouseOver={onMouseOver}>            
             {tags.map(tag=>(
                 <Suggestion 
@@ -70,7 +70,7 @@ export default function BookmarkEditFormTagsSuggested({ item, onTagClick, select
                     disabled={saving}
                     onClick={onSuggestionClick} />
             ))}
-            {!tags.length && !new_tags.length && tags_status === 'no_match' && <span className={s.empty} role='status' aria-live='polite'>{t.s('nothingFound')}</span>}
+            {!tags.length && !new_tags.length && tags_status === 'no_match' && <span className={s.empty} role='status' aria-live='polite'>{t.s('noNewTags')}</span>}
         </div>
     )
 }

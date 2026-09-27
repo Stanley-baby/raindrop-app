@@ -21,9 +21,16 @@ import { environment } from '~target'
 import { API_ENDPOINT_URL } from '~data/constants/app'
 
 const RULE_ID = 100
-const { protocol, hostname } = new URL(API_ENDPOINT_URL)
-const APEX = hostname.split('.').slice(-2).join('.')
-const ORIGINS = { origins: [`*://${APEX}/*`, `*://${hostname}/*`] }
+const getApiHosts = () => {
+    const { protocol, hostname } = new URL(API_ENDPOINT_URL)
+    const apex = hostname.split('.').slice(-2).join('.')
+    return {
+        protocol,
+        hostname,
+        apex,
+        origins: { origins: [...new Set([apex, hostname])].map(host => `*://${host}/*`) }
+    }
+}
 
 async function getSafariProfileId() {
     if (!environment.includes('safari'))
@@ -40,7 +47,7 @@ async function getSafariProfileId() {
 //with the grant the icon opens the normal popup, without it the bare click
 //lands in ask() — the only user gesture reachable from background
 async function updatePopup() {
-    if (await browser.permissions.contains(ORIGINS)) {
+    if (await browser.permissions.contains(getApiHosts().origins)) {
         browser.action.onClicked.removeListener(ask)
         await browser.action.setPopup({ popup: browser.runtime.getManifest().action.default_popup })
     } else {
@@ -51,6 +58,7 @@ async function updatePopup() {
 
 //mirror the profile cookies into a Cookie header for own api requests
 async function updateRules() {
+    const { protocol, apex } = getApiHosts()
     //own profile store is the one listing tabs, shared legacy store never does
     const storeId = (await browser.cookies.getAllCookieStores())
         .find(({ tabIds }) => tabIds?.length)?.id
@@ -58,7 +66,7 @@ async function updateRules() {
 
     //both queries can return the same cookie (e.g. parent-domain ones)
     const cookies = [
-        ...await browser.cookies.getAll({ url: `${protocol}//${APEX}/`, storeId }),
+        ...await browser.cookies.getAll({ url: `${protocol}//${apex}/`, storeId }),
         ...await browser.cookies.getAll({ url: API_ENDPOINT_URL, storeId })
     ]
 
@@ -100,7 +108,7 @@ async function updateRules() {
 }
 
 async function ask() {
-    if (!await browser.permissions.request(ORIGINS)) return
+    if (!await browser.permissions.request(getApiHosts().origins)) return
 
     await updatePopup()
     await updateRules()
@@ -118,7 +126,7 @@ function ping() {
 }
 
 function onCookieChanged({ cookie }) {
-    if (cookie?.domain?.includes(APEX)) ping()
+    if (cookie?.domain?.includes(getApiHosts().apex)) ping()
 }
 
 //fix cookies in non default Safari profiles (they are broken)

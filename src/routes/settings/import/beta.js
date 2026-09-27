@@ -145,7 +145,7 @@ export default function BetaMigration() {
             {state.preflight && ['review', 'processing', 'success', 'error'].includes(state.phase) && (
                 <>
                     <Alert>
-                        {state.preflight.counts?.collections || 0} collections, {state.preflight.counts?.bookmarks || 0} bookmarks, {state.preflight.counts?.assets || 0} protected files
+                        {state.preflight.counts?.collections || 0} collections, {state.preflight.counts?.bookmarks || 0} bookmarks, {state.preflight.counts?.assets || 0} protected files, {state.preflight.counts?.archives || 0} web archives
                     </Alert>
                     {state.phase === 'review' && (
                         <>

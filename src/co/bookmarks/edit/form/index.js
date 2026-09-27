@@ -1,6 +1,7 @@
 import s from './index.module.styl'
-import React, { useCallback, useEffect, useRef } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useDispatch } from 'react-redux'
+import t from '~t'
 import { suggestFields } from '~data/actions/bookmarks'
 
 import { Layout, Separator, Group } from '~co/common/form'
@@ -14,18 +15,18 @@ import Link from './link'
 import Reminder from './reminder'
 import Important from './important'
 import Date from './date'
+import Button from '~co/common/button'
 
 export default function BookmarkEditForm(props) {
     const dispatch = useDispatch()
     const beforeSaveRef = useRef(null)
     const savePromiseRef = useRef(null)
+    const latestItemRef = useRef(props.item)
+    const [suggestionError, setSuggestionError] = useState('')
+    latestItemRef.current = props.item
 
     const registerBeforeSave = useCallback(handler=>{
         beforeSaveRef.current = handler || null
-        return ()=>{
-            if (beforeSaveRef.current === handler)
-                beforeSaveRef.current = null
-        }
     }, [])
 
     const onSave = useCallback(()=>{
@@ -48,13 +49,26 @@ export default function BookmarkEditForm(props) {
         })
     }, [props.onSave])
 
+    useEffect(()=>{
+        props.registerFormSave?.(onSave)
+    }, [onSave, props.registerFormSave])
+
     const formProps = { ...props, onSave }
 
     //load suggestions
-    useEffect(()=>
-        { dispatch(suggestFields(props.item)) },
-        [props.item._id, props.item.link]
-    )
+    useEffect(()=>{
+        const original = props.item
+        dispatch(suggestFields(original, false, ({ normalizedTitle, note })=>{
+            if (props.status != 'new') return
+            const current = latestItemRef.current
+            const changes = {}
+            if (normalizedTitle && current.title == original.title) changes.title = normalizedTitle
+            if (note && !String(current.note || '').trim()) changes.note = note
+            if (Object.keys(changes).length) props.onChange(changes)
+        }))
+    }, [props.item._id, props.item.link])
+
+    useEffect(()=>setSuggestionError(''), [props.item._id, props.item.link])
 
     const onSubmitForm = useCallback(e=>{
         e.preventDefault()
@@ -75,9 +89,17 @@ export default function BookmarkEditForm(props) {
                 <Cover {...formProps} />
                 <Title  {...formProps} />
                 <Note {...formProps} />
+                {suggestionError && <>
+                    <div />
+                    <div className={s.error} role='alert'>
+                        <span>{suggestionError}</span>
+                        <Button href='/settings/app#ai-model' variant='link' size='small'>{t.s('aiModelChange')}</Button>
+                        <Button href='/settings/app#ai-usage' variant='link' size='small'>{t.s('aiGateway')}</Button>
+                    </div>
+                </>}
                 
-                <Collection {...formProps} registerBeforeSave={registerBeforeSave} />
-                <Tags {...formProps} />
+                <Collection {...formProps} registerBeforeSave={registerBeforeSave} onSuggestionError={setSuggestionError} />
+                <Tags {...formProps} onSuggestionError={setSuggestionError} />
                 <Link {...formProps} />
 
                 <div />

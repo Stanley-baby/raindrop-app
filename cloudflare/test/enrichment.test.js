@@ -214,6 +214,10 @@ test('fetchable URL validation rejects internal destinations and accepts public 
         'http://127.0.0.1:8080',
         'http://10.0.0.1',
         'http://169.254.169.254/latest/meta-data',
+        'http://192.0.0.1/',
+        'http://192.0.2.1/',
+        'http://192.168.1.1/',
+        'http://198.51.100.1/',
         'http://[::1]/',
         'http://metadata.google.internal/',
         'ftp://public.example.test/file',
@@ -221,6 +225,9 @@ test('fetchable URL validation rejects internal destinations and accepts public 
     ]) assert.equal(validateFetchableUrl(value).ok, false, value)
     assert.equal(validateFetchableUrl('https://public.example.test/page').ok, true)
     assert.equal(validateFetchableUrl('http://public.example.test:80/page').ok, true)
+    assert.equal(validateFetchableUrl('http://192.0.66.108/').ok, true)
+    assert.equal(validateFetchableUrl('http://192.2.0.1/').ok, true)
+    assert.equal(validateFetchableUrl('http://198.51.99.1/').ok, true)
 })
 
 test('configured DNS resolution rejects private answers before fetching a hostname', async t => {
@@ -238,6 +245,24 @@ test('configured DNS resolution rejects private answers before fetching a hostna
         error => error.code === 'url_not_public'
     )
     assert.equal(originFetches, 0)
+})
+
+test('configured DNS resolution allows public 192.0 addresses before fetching a hostname', async t => {
+    const originalFetch = globalThis.fetch
+    let originFetches = 0
+    globalThis.fetch = async url => {
+        if (String(url).startsWith('https://dns.example.test/resolve')) {
+            const type = new URL(String(url)).searchParams.get('type')
+            return Response.json({ Status: 0, Answer: type === 'A'
+                ? [{ type: 1, data: '192.0.66.108' }]
+                : [{ type: 28, data: '2a04:fa87:fffd::c000:426c' }] })
+        }
+        originFetches++
+        return new Response('<title>NASA</title>', { status: 200, headers: { 'Content-Type': 'text/html' } })
+    }
+    t.after(() => { globalThis.fetch = originalFetch })
+    await fetchPageMetadata('https://public.example.test/page', { FETCH_DNS_RESOLVER: 'https://dns.example.test/resolve' })
+    assert.equal(originFetches, 1)
 })
 
 test('metadata task creation is idempotent and queue payload contains no URL or secret', async () => {

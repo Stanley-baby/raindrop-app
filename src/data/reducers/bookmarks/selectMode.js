@@ -17,6 +17,7 @@ import {
 	SELECT_MODE_REMOVETAGS_SELECTED,
 	SELECT_MODE_MOVE_SELECTED,
 	SELECT_MODE_REPARSE_SELECTED,
+	SELECT_MODE_RECHECK_SELECTED,
 	SELECT_MODE_FAIL_SELECTED,
 
 	SPACE_LOAD_REQ,
@@ -129,6 +130,9 @@ export default function(state, action) {switch (action.type) {
 
 	case SELECT_MODE_REPARSE_SELECTED:
 		return state.setIn(['selectMode', 'working'], 'reparse')
+
+	case SELECT_MODE_RECHECK_SELECTED:
+		return state.setIn(['selectMode', 'working'], 'recheck')
 
 	case SELECT_MODE_FAIL_SELECTED:
 		return state.setIn(['selectMode', 'working'], '')

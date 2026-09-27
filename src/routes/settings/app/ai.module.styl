@@ -1,0 +1,771 @@
+.card {
+    grid-column: 1 / -1
+    min-width: 0
+    padding: var(--padding-medium)
+    display: grid
+    gap: var(--padding-medium)
+    border: 1px solid var(--shadow-color)
+    border-radius: calc(var(--border-radius) * 2)
+    background: var(--background-color)
+
+    h2 {
+        margin: 0 0 var(--padding-mini)
+        font-size: var(--primary-font-size)
+        line-height: 1.3
+    }
+
+    button {
+        transition: transform 120ms cubic-bezier(.23, 1, .32, 1), box-shadow 100ms ease, filter 100ms ease, opacity 100ms ease
+
+        &:active {
+            transform: scale(.97)
+        }
+    }
+}
+
+.cardHeader,
+.modelSummary,
+.modelBadges,
+.disclosureSummary,
+.disclosureStatus,
+.summary {
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    gap: var(--padding-small)
+}
+
+.cardHeader,
+.disclosureSummary {
+    justify-content: space-between
+}
+
+.cardHeader > :first-child,
+.disclosureSummary > :first-child {
+    min-width: 0
+    flex: 1 1 18em
+}
+
+.featureCard {
+    padding-bottom: var(--padding-small)
+}
+
+.featureGrid {
+    display: grid
+    grid-template-columns: repeat(2, minmax(0, 1fr))
+    border-top: 1px solid var(--shadow-color)
+}
+
+.featureItem {
+    min-width: 0
+    padding: var(--padding-medium) 0
+
+    &:not(:last-child) {
+        padding-right: var(--padding-medium)
+        border-right: 1px solid var(--shadow-color)
+    }
+
+    &:last-child {
+        padding-left: var(--padding-medium)
+    }
+}
+
+.modelPicker {
+    min-width: 0
+    position: relative
+    border-radius: var(--border-radius)
+    background: var(--alternative-background-color)
+}
+
+.modelPicker[open] {
+    box-shadow: 0 8px 24px unquote('color-mix(in srgb, var(--primary-text-color) 10%, transparent)')
+}
+
+.modelSummary {
+    min-height: 72px
+    padding: var(--padding-small) var(--padding-medium)
+    justify-content: space-between
+    cursor: pointer
+    list-style: none
+
+    &::-webkit-details-marker {
+        display: none
+    }
+
+    &:focus-visible {
+        border-radius: var(--border-radius)
+        box-shadow: inset 0 0 0 1px var(--accent-color), 0 0 0 var(--shadow-height) var(--accent-color)
+        outline: none
+    }
+}
+
+.modelIdentity {
+    min-width: 0
+    display: grid
+    gap: var(--padding-mini)
+}
+
+.modelTitle {
+    min-width: 0
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    gap: var(--padding-small)
+}
+
+.modelBadges {
+    flex-wrap: nowrap
+    justify-content: flex-end
+}
+
+.modelId {
+    overflow: hidden
+    color: var(--secondary-text-color)
+    font-size: var(--secondary-font-size)
+    text-overflow: ellipsis
+    white-space: nowrap
+}
+
+.modelChange,
+.disclosureAction {
+    min-height: 32px
+    padding: 0 var(--padding-small)
+    display: inline-flex
+    align-items: center
+    border: 1px solid var(--shadow-color)
+    border-radius: var(--border-radius)
+    background: var(--background-color)
+    color: var(--primary-text-color)
+    font-size: var(--secondary-font-size)
+    font-weight: 600
+    white-space: nowrap
+}
+
+.modelMenu {
+    padding: var(--padding-small)
+    display: grid
+    gap: var(--padding-small)
+    border-top: 1px solid var(--shadow-color)
+}
+
+.modelMenu .input {
+    background: var(--background-color)
+}
+
+.modelList {
+    max-height: 320px
+    overflow-y: auto
+    display: grid
+    gap: 2px
+}
+
+.modelOption {
+    width: 100%
+    min-width: 0
+    padding: var(--padding-small)
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: var(--padding-small)
+    border: 0
+    border-radius: var(--border-radius)
+    background: transparent
+    color: var(--primary-text-color)
+    font: inherit
+    text-align: left
+    cursor: pointer
+
+    &:hover,
+    &:focus-visible,
+    &[data-selected='true'] {
+        background: var(--background-color)
+        outline: none
+    }
+
+    &:disabled {
+        cursor: default
+        opacity: .55
+    }
+
+    > span:first-child {
+        min-width: 0
+        display: grid
+        gap: 2px
+    }
+
+    small {
+        overflow: hidden
+        color: var(--secondary-text-color)
+        font-size: var(--secondary-font-size)
+        text-overflow: ellipsis
+        white-space: nowrap
+    }
+}
+
+.modelCheck {
+    color: var(--accent-color)
+    font-weight: 700
+}
+
+.thinkingRow {
+    padding-top: var(--padding-medium)
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    justify-content: space-between
+    gap: var(--padding-medium)
+    border-top: 1px solid var(--shadow-color)
+}
+
+.thinkingLevel {
+    display: grid
+    grid-template-columns: auto auto
+    align-items: center
+    gap: var(--padding-small)
+    color: var(--secondary-text-color)
+    font-size: var(--secondary-font-size)
+}
+
+.segmented {
+    padding: 2px
+    display: grid
+    grid-template-columns: repeat(3, minmax(40px, 1fr))
+    border-radius: var(--border-radius)
+    background: var(--alternative-background-color)
+
+    button {
+        min-height: 30px
+        padding: 0 var(--padding-small)
+        border: 1px solid transparent
+        border-radius: calc(var(--border-radius) - 2px)
+        background: transparent
+        color: var(--secondary-text-color)
+        font: inherit
+        cursor: pointer
+
+        &[aria-pressed='true'] {
+            border-color: var(--shadow-color)
+            background: var(--background-color)
+            color: var(--accent-color)
+            font-weight: 600
+        }
+
+        &:focus-visible {
+            box-shadow: 0 0 0 var(--shadow-height) var(--accent-color)
+            outline: none
+        }
+    }
+}
+
+.disclosure {
+    padding: 0
+}
+
+.disclosureSummary {
+    padding: var(--padding-medium)
+    cursor: pointer
+    list-style: none
+
+    &::-webkit-details-marker {
+        display: none
+    }
+
+    &:focus-visible {
+        border-radius: calc(var(--border-radius) * 2)
+        box-shadow: inset 0 0 0 1px var(--accent-color), 0 0 0 var(--shadow-height) var(--accent-color)
+        outline: none
+    }
+}
+
+.disclosureLead {
+    display: flex
+    align-items: center
+    gap: var(--padding-small)
+}
+
+.customIcon {
+    width: 32px
+    height: 32px
+    display: inline-grid
+    flex: 0 0 auto
+    place-items: center
+    border-radius: var(--border-radius)
+    background: var(--alternative-background-color)
+    color: var(--secondary-text-color)
+    font-size: 10px
+    font-weight: 700
+    letter-spacing: .04em
+}
+
+.disclosureStatus {
+    flex-wrap: nowrap
+    max-width: 55%
+}
+
+.customStatus {
+    overflow: hidden
+    color: var(--secondary-text-color)
+    font-size: var(--secondary-font-size)
+    text-overflow: ellipsis
+    white-space: nowrap
+}
+
+.disclosureAction {
+    color: var(--accent-color)
+}
+
+.chevron {
+    fill: none
+    stroke: currentColor
+    stroke-linecap: round
+    stroke-linejoin: round
+    stroke-width: 1.5
+    color: var(--secondary-text-color)
+    transition: transform 160ms cubic-bezier(.23, 1, .32, 1)
+}
+
+.disclosure[open] .chevron {
+    transform: rotate(180deg)
+}
+
+.disclosureBody {
+    padding: var(--padding-medium)
+    display: grid
+    gap: var(--padding-medium)
+    border-top: 1px solid var(--shadow-color)
+}
+
+.customForm {
+    display: grid
+    grid-template-columns: repeat(2, minmax(0, 1fr))
+    gap: var(--padding-medium)
+}
+
+.customField {
+    min-width: 0
+    display: grid
+    gap: var(--padding-mini)
+}
+
+.customActions,
+.promptActions {
+    display: flex
+    flex-wrap: wrap
+    align-items: center
+    gap: var(--padding-small)
+}
+
+.promptSettings,
+.promptEditor {
+    display: grid
+    gap: var(--padding-medium)
+}
+
+.modelRow {
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: var(--padding-small)
+}
+
+.promptTabs {
+    width: 240px
+    max-width: 100%
+    padding: 3px
+    display: grid
+    grid-template-columns: repeat(3, minmax(0, 1fr))
+    border-radius: var(--border-radius)
+    background: var(--alternative-background-color)
+
+    button {
+        min-width: 0
+        min-height: 30px
+        padding: 0 var(--padding-small)
+        justify-content: center
+    }
+}
+
+.promptText {
+    min-height: 160px
+    max-height: 420px
+    overflow: hidden
+    resize: vertical
+
+    > label,
+    textarea {
+        width: 100%
+        height: 100% !important
+        min-height: 0
+        max-height: none
+    }
+
+    > label {
+        align-items: stretch
+    }
+
+    textarea {
+        overflow: auto
+        field-sizing: fixed
+    }
+}
+
+.promptPanel {
+    opacity: 1
+    transition: opacity 120ms ease
+
+    @starting-style {
+        opacity: 0
+    }
+}
+
+.promptPreview {
+    padding: var(--padding-medium)
+    display: grid
+    gap: var(--padding-medium)
+    border-radius: var(--border-radius)
+    background: var(--alternative-background-color)
+}
+
+.promptPreviewGrid {
+    display: grid
+    grid-template-columns: repeat(auto-fit, minmax(16em, 1fr))
+    gap: var(--padding-medium)
+}
+
+.select,
+.input {
+    min-width: 0
+    max-width: 100%
+    min-height: var(--button-height)
+    padding: 0 var(--padding-small)
+    border: 0
+    border-radius: var(--border-radius)
+    background: var(--alternative-background-color)
+    color: var(--primary-text-color)
+    font: inherit
+}
+
+.providerSelect {
+    display: grid
+    grid-template-columns: auto auto
+    align-items: center
+    justify-items: start
+    gap: var(--padding-mini) var(--padding-small)
+    color: var(--secondary-text-color)
+    font-size: var(--secondary-font-size)
+
+    > small {
+        grid-column: 1 / -1
+        color: var(--secondary-text-color)
+    }
+}
+
+.providerControl {
+    min-width: 124px
+    min-height: 32px
+    padding: 0 10px
+    display: inline-flex
+    align-items: center
+    gap: 8px
+    border: 1px solid var(--shadow-color)
+    border-radius: var(--border-radius)
+    background: var(--background-color)
+    color: var(--primary-text-color)
+    list-style: none
+
+    &::-webkit-details-marker {
+        display: none
+    }
+}
+
+.providerStatic {
+    cursor: default
+}
+
+.providerPicker {
+    position: relative
+
+    &[open] .providerControl svg {
+        transform: rotate(180deg)
+    }
+
+    svg {
+        margin-left: auto
+        fill: none
+        stroke: currentColor
+        stroke-linecap: round
+        stroke-linejoin: round
+        stroke-width: 1.5
+        transition: transform 160ms cubic-bezier(.23, 1, .32, 1)
+    }
+}
+
+.providerMenu {
+    width: max-content
+    min-width: 100%
+    position: absolute
+    top: calc(100% + 4px)
+    right: 0
+    z-index: 10
+    padding: 4px
+    display: grid
+    gap: 2px
+    border: 1px solid var(--shadow-color)
+    border-radius: var(--border-radius)
+    background: var(--background-color)
+    box-shadow: 0 8px 24px unquote('color-mix(in srgb, var(--primary-text-color) 12%, transparent)')
+
+    button {
+        min-height: 32px
+        padding: 0 8px
+        display: flex
+        align-items: center
+        justify-content: space-between
+        gap: 16px
+        border: 0
+        border-radius: var(--border-radius)
+        background: transparent
+        color: var(--primary-text-color)
+        font: inherit
+        text-align: left
+        cursor: pointer
+
+        &:hover,
+        &:focus-visible,
+        &[aria-pressed='true'] {
+            background: var(--alternative-background-color)
+            outline: none
+        }
+    }
+}
+
+.statusDot,
+.statusDotActive {
+    width: 7px
+    height: 7px
+    flex: 0 0 auto
+    border-radius: 50%
+    background: var(--secondary-text-color)
+}
+
+.statusDotActive {
+    background: #2da44e
+}
+
+.meta,
+.muted {
+    color: var(--secondary-text-color)
+    font-size: var(--secondary-font-size)
+}
+
+.badge,
+.reasoningBadge {
+    min-height: 22px
+    padding: 0 var(--padding-small)
+    display: inline-flex
+    align-items: center
+    border-radius: 999px
+    background: var(--alternative-background-color)
+    color: var(--secondary-text-color)
+    font-size: var(--secondary-font-size)
+}
+
+.reasoningBadge {
+    background: unquote('hsla(var(--accent-hsl), .1)')
+    color: var(--accent-color)
+}
+
+.warning {
+    padding: var(--padding-small)
+    border-radius: var(--border-radius)
+    background: var(--warning-background-color, var(--alternative-background-color))
+    color: var(--warning-color, var(--primary-text-color))
+}
+
+.summary {
+    display: grid
+    grid-template-columns: repeat(4, minmax(0, 1fr))
+}
+
+.stat {
+    min-width: 0
+    padding: var(--padding-small)
+    border-radius: var(--border-radius)
+    background: var(--alternative-background-color)
+}
+
+.stat strong,
+.stat small {
+    display: block
+}
+
+.stat small {
+    overflow: hidden
+    color: var(--secondary-text-color)
+    text-overflow: ellipsis
+    white-space: nowrap
+}
+
+.sectionTitle {
+    color: var(--secondary-text-color)
+    font-size: var(--secondary-font-size)
+    font-weight: 600
+}
+
+.chart {
+    min-height: 132px
+    position: relative
+    padding: var(--padding-small) 0 1.5rem
+
+    svg {
+        width: 100%
+        height: auto
+        display: block
+        overflow: visible
+    }
+}
+
+.chartGrid {
+    stroke: var(--shadow-color)
+    stroke-width: 1
+    vector-effect: non-scaling-stroke
+}
+
+.chartArea {
+    fill: unquote('hsla(var(--accent-hsl), .08)')
+}
+
+.chartLine {
+    fill: none
+    stroke: var(--accent-color)
+    stroke-linecap: round
+    stroke-linejoin: round
+    stroke-width: 2
+    vector-effect: non-scaling-stroke
+}
+
+.chartPoint,
+.chartPointActive {
+    fill: transparent
+    stroke: transparent
+    cursor: crosshair
+}
+
+.chartPointActive {
+    fill: var(--background-color)
+    stroke: var(--accent-color)
+    stroke-width: 2
+    vector-effect: non-scaling-stroke
+}
+
+.chartGuide {
+    stroke: var(--secondary-text-color)
+    stroke-dasharray: 3 3
+    stroke-width: 1
+    vector-effect: non-scaling-stroke
+}
+
+.chartTooltip {
+    position: absolute
+    top: 0
+    z-index: 2
+    min-width: 136px
+    padding: var(--padding-small)
+    display: grid
+    gap: 2px
+    transform: translate(-50%, -95%) translateY(4px)
+    border: 1px solid var(--shadow-color)
+    border-radius: var(--border-radius)
+    background: var(--background-color)
+    box-shadow: 0 8px 24px unquote('color-mix(in srgb, var(--primary-text-color) 12%, transparent)')
+    font-size: var(--secondary-font-size)
+    pointer-events: none
+    animation: tooltip-in 120ms ease forwards
+
+    span {
+        color: var(--secondary-text-color)
+    }
+}
+
+.chartAxis {
+    display: flex
+    justify-content: space-between
+    color: var(--secondary-text-color)
+    font-size: 10px
+}
+
+@keyframes tooltip-in {
+    to {
+        transform: translate(-50%, -100%)
+    }
+}
+
+.tableWrap {
+    max-width: 100%
+    overflow-x: auto
+}
+
+.table {
+    width: 100%
+    border-collapse: collapse
+    font-size: var(--secondary-font-size)
+
+    th,
+    td {
+        padding: var(--padding-small) var(--padding-mini)
+        text-align: left
+        border-bottom: 1px solid var(--shadow-color)
+    }
+
+    th {
+        color: var(--secondary-text-color)
+        font-weight: 400
+    }
+}
+
+@media (max-width: 640px) {
+    .featureGrid,
+    .customForm,
+    .summary {
+        grid-template-columns: 1fr
+    }
+
+    .featureItem:not(:last-child) {
+        padding-right: 0
+        border-right: 0
+        border-bottom: 1px solid var(--shadow-color)
+    }
+
+    .featureItem:last-child {
+        padding-left: 0
+    }
+
+    .cardHeader,
+    .thinkingRow {
+        align-items: stretch
+    }
+
+    .providerSelect,
+    .thinkingLevel {
+        grid-template-columns: 1fr
+    }
+
+    .disclosureStatus {
+        max-width: 100%
+    }
+
+    .modelOption {
+        align-items: flex-start
+        flex-direction: column
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .card button,
+    .chevron,
+    .promptPanel,
+    .chartTooltip {
+        transition-duration: 0ms
+        animation-duration: 0ms
+    }
+}

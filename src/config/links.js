@@ -1,9 +1,10 @@
 import { target, environment } from '~target'
 import { independentService } from './environment'
+import { APP_BASE_URL } from '~data/constants/app'
 
 const repositoryUrl = process.env.REPOSITORY_URL || 'https://github.com/your-org/your-repo'
 const helpOrigin = process.env.HELP_ORIGIN || repositoryUrl
-const appOrigin = independentService ? process.env.APP_ORIGIN || 'http://localhost:2000' : 'https://app.raindrop.io'
+const appOrigin = () => independentService ? APP_BASE_URL : 'https://app.raindrop.io'
 
 //safari extension in-app purchase
 let overrideProLink = ''
@@ -15,9 +16,9 @@ if (!independentService && target == 'extension')
 
 const hostedLinks = {
     app: {
-        index: appOrigin,
-        search: appOrigin + '/my/0/',
-        import: appOrigin + '/settings/import'
+        index: appOrigin(),
+        search: appOrigin() + '/my/0/',
+        import: appOrigin() + '/settings/import'
     },
 
     download: 'https://raindrop.io/download',
@@ -79,13 +80,13 @@ const hostedLinks = {
 
 const independentLinks = {
     app: {
-        index: appOrigin,
-        search: appOrigin + '/my/0/',
-        import: appOrigin + '/settings/import'
+        get index() { return appOrigin() },
+        get search() { return appOrigin() + '/my/0/' },
+        get import() { return appOrigin() + '/settings/import' }
     },
     download: repositoryUrl + '/releases',
     blog: repositoryUrl,
-    home: appOrigin,
+    get home() { return appOrigin() },
     help: {
         index: helpOrigin,
         terms: helpOrigin,
@@ -112,7 +113,7 @@ const independentLinks = {
     },
     pro: {
         buy: repositoryUrl + '/discussions',
-        frame: appOrigin,
+        get frame() { return appOrigin() },
         compare: repositoryUrl,
         faq: repositoryUrl,
         'help-change-billing-cycle': helpOrigin,
@@ -121,7 +122,7 @@ const independentLinks = {
     dev: {
         index: repositoryUrl,
         terms: repositoryUrl + '/blob/master/LICENSE.md',
-        token: appOrigin + '/settings/integrations/dev',
+        get token() { return appOrigin() + '/settings/integrations/dev' },
         github: repositoryUrl
     }
 }

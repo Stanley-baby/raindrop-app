@@ -1,27 +1,37 @@
-# P0 发布基线
+# 正式发布范围（P0-P6）
 
 - 发布分支：`codex/release-2026-09-26`
 - 基线提交：`dc77fe9597b4710bdfc928224711106030b9c81d`（当前 `develop`，领先 `origin/develop` 2 个提交）
-- P0 只固定范围、隔离临时产物并留存上线前数据基线；本阶段不部署生产。
+- P0 只固定范围、隔离临时产物并留存上线前数据基线；P0 阶段不部署生产，后续 P1-P6 完成验收后再发布。
 
 ## 本次发布范围
 
 1. 失效链接 V1：队列式自动检查、单条/批量手动重检与状态呈现。
 2. 重复书签 V1.5：候选分组、人工审查、合并与撤销。
-3. Web Archive V2：手动归档、归档状态与查看/下载流程。
+3. Web Archive V2：手动归档、归档状态、查看/下载流程，以及集合所有者发布/撤销公开快照。
 4. AI 功能与现有用户备份功能。
+5. P1 运行时域名：Web 与扩展从当前请求/配置读取地址，绑定自定义域名后无需重新构建。
 
 ## 明确排除
 
-- Web Archive 内容扫描器；生产配置进入发布阶段时必须显式保持 `ARCHIVE_SCAN_ENABLED=false`。
+- Web Archive 内容扫描器；生产配置必须显式保持 `ARCHIVE_SCAN_ENABLED=false`。
 - 本地审计、浏览器记录、实验目录、临时部署日志和构建输出；`.gitignore` 已列出精确排除路径。
-- 自定义域名运行时切换与“域名变化无需重建”的架构改造；列为后续 P1，不混入本次基线。
 
-## P0 已核验项与后续发布门槛
+## 已核验项与后续发布门槛
 
-- 契约测试基线：176 项通过。
+- 契约测试：186 项通过（`npm run test:contract`，exit 0）。
 - 生产 D1 已导出到本机忽略目录；备份校验和及命令见同目录 `VERIFICATION.txt`。
 - 生产两个 R2 桶的在线信息均为 0 对象、0 B，因此本次检查时无对象需镜像；下次发布前需重新检查。
 - 生产 D1 的 `background_tasks` 当前无状态行；Queue 负载只含任务 ID 和类型，任务详情留在 D1。Wrangler 当前命令集没有 Queue 消息快照/导出命令；部署前仍需检查实时 Queue 指标与 DLQ。
-- Wrangler 环境变量不从顶层继承到 `env.production`。发布前必须在生产配置中逐项显式核对 V1/V1.5/V2 功能开关和域名/CORS；P0 不改变线上开关。
+- Wrangler 环境变量不从顶层继承到 `env.production`。发布前必须在生产配置中逐项显式核对 V1/V1.5/V2 功能开关和域名/CORS；扫描器保持关闭。
 - 当前源码改动还未形成发布提交或标签；发布分支上的功能改动需完成配置审查与完整回归后再冻结提交。
+
+## P2-P6 验收门槛
+
+| 阶段 | 门槛 | 结果 |
+| --- | --- | --- |
+| P2 | D1 迁移无 pending，生产开关逐项核对且扫描器关闭 | 已通过；`wrangler d1 migrations list` pending 0；`ARCHIVE_SCAN_ENABLED=false`、`ATTACHMENT_SCAN_ENABLED=false` |
+| P3 | API/Worker 契约与回归测试 | 已通过；`npm run test:contract` 186/186，exit 0 |
+| P4 | Web 与自托管扩展生产构建 | 已通过；`npm run build:selfhosted` 与 `npm run build:extension:selfhosted` exit 0 |
+| P5 | Pages/Worker 部署与线上 smoke | 已通过；Pages `/health`、`/version` 200，未登录 `/v1/user` 401 |
+| P6 | 回滚脚本在独立副本验证并保留发布证据 | 已通过；`ROLLBACK_RESULT=PASS` |
