@@ -58,6 +58,7 @@ export default function AiPage() {
     const [provider, setProvider] = useState('workers_ai')
     const [providerEndpoint, setProviderEndpoint] = useState('')
     const [providerModel, setProviderModel] = useState('')
+    const [providerReasoningMode, setProviderReasoningMode] = useState('reasoning_effort')
     const [providerKey, setProviderKey] = useState('')
     const [savingProvider, setSavingProvider] = useState(false)
     const [failedProvider, setFailedProvider] = useState('')
@@ -87,6 +88,7 @@ export default function AiPage() {
             setConfig(configBody)
             setProviderEndpoint(configBody.custom?.endpoint || '')
             setProviderModel(configBody.custom?.model || '')
+            setProviderReasoningMode(configBody.custom?.reasoningMode || 'reasoning_effort')
             setChats(items)
             const [proposalsResponse, approvalsResponse] = await Promise.all([
                 fetch(API_ORIGIN + '/v2/ai/action-proposals?status=pending', { credentials: 'include' }).catch(() => null),
@@ -200,11 +202,12 @@ export default function AiPage() {
                 method: 'PUT',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ endpoint: providerEndpoint, model: providerModel, apiKey: providerKey })
+                body: JSON.stringify({ endpoint: providerEndpoint, model: providerModel, apiKey: providerKey, reasoningMode: providerReasoningMode })
             })
             const body = await readJson(response)
             if (!response.ok) throw new Error(body.errorMessage || 'Custom AI Provider could not be saved')
             setConfig(current => ({ ...current, custom: body.custom }))
+            setProviderReasoningMode(body.custom?.reasoningMode || providerReasoningMode)
             setProviderKey('')
             setProvider('custom')
             setFailedProvider('')
@@ -213,7 +216,7 @@ export default function AiPage() {
         } finally {
             setSavingProvider(false)
         }
-    }, [providerEndpoint, providerKey, providerModel, savingProvider])
+    }, [providerEndpoint, providerKey, providerModel, providerReasoningMode, savingProvider])
 
     const deleteProvider = useCallback(async () => {
         setError('')
@@ -528,6 +531,16 @@ export default function AiPage() {
                             <span>API key</span>
                             <input type='password' value={providerKey} onChange={event => setProviderKey(event.target.value)} placeholder={config?.custom?.configured ? 'Enter to replace' : 'API key'} aria-label='Custom AI API key' autoComplete='off' />
                         </div>
+                        <div className={s.providerField}>
+                            <span>{t.s('aiCustomReasoning')}</span>
+                            <select value={providerReasoningMode} onChange={event => setProviderReasoningMode(event.target.value)} aria-label={t.s('aiCustomReasoning')}>
+                                <option value='unsupported'>Unsupported</option>
+                                <option value='reasoning_effort'>reasoning_effort</option>
+                                <option value='chat_template_kwargs.enable_thinking'>chat_template_kwargs.enable_thinking</option>
+                                <option value='chat_template_kwargs.thinking'>chat_template_kwargs.thinking</option>
+                            </select>
+                        </div>
+                        <small>{t.s('aiCustomReasoningHint')}</small>
                         <div className={s.providerActions}>
                             <button type='button' onClick={saveProvider} disabled={savingProvider || !providerEndpoint.trim() || !providerModel.trim() || !providerKey.trim()}>{savingProvider ? 'Testing…' : 'Test & save'}</button>
                             {config?.custom?.configured && <button type='button' onClick={deleteProvider} disabled={savingProvider}>Delete provider</button>}

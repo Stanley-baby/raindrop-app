@@ -1,5 +1,6 @@
 import { all, call, put, takeEvery, select } from 'redux-saga/effects'
 import Api from '../../modules/api'
+import dedupeGet from '../../modules/dedupeGet'
 import { removeCollection } from './single'
 import _ from 'lodash-es'
 
@@ -47,7 +48,7 @@ export function* loadCollections({ ignore=false, onSuccess, onFail }) {
 		const [collections, stat={}, { user }] = yield all([
 			call(Api.get, 'collections/all'),
 			call(Api.get, 'user/stats'),
-			call(Api.get, 'user')
+			call(dedupeGet, 'user')
 		])
 
 		//Prepare default collections

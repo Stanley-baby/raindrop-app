@@ -40,8 +40,8 @@ export const normalizeItems = ({ tags, broken, duplicate, important, note, highl
         )
     }
 
-    if (broken && broken.count)
-        items.push({ _id: 'broken', count: broken.count, query: 'broken:true ', top: true, quick: true })
+    if (broken)
+        items.push({ _id: 'broken', count: broken.count || 0, query: 'broken:true ', top: true, quick: true })
 
     if (duplicate && duplicate.count)
         items.push({ _id: 'duplicate', count: duplicate.count, query: 'duplicate:true ', top: true, quick: true })

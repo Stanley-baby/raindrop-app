@@ -488,6 +488,24 @@
             "responses": [200, 401, 404, 500]
         },
         {
+            "method": "GET",
+            "path": "/v1/raindrop/:id/archive",
+            "authentication": "required",
+            "responses": [200, 401, 404, 500]
+        },
+        {
+            "method": "POST",
+            "path": "/v1/raindrop/:id/archive",
+            "authentication": "required",
+            "responses": [202, 400, 401, 403, 404, 503, 500]
+        },
+        {
+            "method": "DELETE",
+            "path": "/v1/raindrop/:id/archive",
+            "authentication": "required",
+            "responses": [200, 401, 403, 404, 500]
+        },
+        {
             "method": "POST",
             "path": "/v1/raindrop/:id/capture",
             "authentication": "required",
@@ -516,6 +534,42 @@
             "path": "/v1/content/:id/download",
             "authentication": "required",
             "responses": [200, 401, 404, 409, 503, 500]
+        },
+        {
+            "method": "GET",
+            "path": "/v1/archive/:id/view",
+            "authentication": "required",
+            "responses": [200, 401, 404, 409, 503, 500]
+        },
+        {
+            "method": "GET",
+            "path": "/v1/archive/:id/assets/:assetId",
+            "authentication": "required",
+            "responses": [200, 401, 404, 409, 503, 500]
+        },
+        {
+            "method": "GET",
+            "path": "/v1/archive/:id/download",
+            "authentication": "required",
+            "responses": [200, 401, 404, 409, 503, 500]
+        },
+        {
+            "method": "POST",
+            "path": "/v1/archive/:id/publish",
+            "authentication": "required",
+            "responses": [200, 401, 403, 404, 409, 500]
+        },
+        {
+            "method": "DELETE",
+            "path": "/v1/archive/:id/publish",
+            "authentication": "required",
+            "responses": [200, 401, 403, 404, 500]
+        },
+        {
+            "method": "GET",
+            "path": "/v1/archive/quota",
+            "authentication": "required",
+            "responses": [200, 401, 500]
         },
         {
             "method": "GET",
@@ -804,6 +858,48 @@
             "path": "/v1/collection/:id/sharing/:userId",
             "authentication": "required",
             "responses": [200, 400, 401, 403, 404, 500]
+        },
+        {
+            "method": "POST",
+            "path": "/v1/duplicates/scan",
+            "authentication": "required",
+            "responses": [202, 400, 401, 404, 409, 503, 500]
+        },
+        {
+            "method": "GET",
+            "path": "/v1/duplicates",
+            "authentication": "required",
+            "responses": [200, 401, 404, 409, 500]
+        },
+        {
+            "method": "GET",
+            "path": "/v1/duplicates/:id",
+            "authentication": "required",
+            "responses": [200, 401, 404, 409, 500]
+        },
+        {
+            "method": "POST",
+            "path": "/v1/duplicates/:id/resolve",
+            "authentication": "required",
+            "responses": [200, 400, 401, 404, 409, 500]
+        },
+        {
+            "method": "POST",
+            "path": "/v1/duplicates/merge/:id/undo",
+            "authentication": "required",
+            "responses": [200, 401, 404, 409, 500]
+        },
+        {
+            "method": "POST",
+            "path": "/v1/raindrop/:id/link-check",
+            "authentication": "required",
+            "responses": [202, 401, 403, 404, 409, 429, 503, 500]
+        },
+        {
+            "method": "POST",
+            "path": "/v1/raindrops/link-check",
+            "authentication": "required",
+            "responses": [202, 400, 401, 403, 409, 429, 500]
         }
     ]
 }

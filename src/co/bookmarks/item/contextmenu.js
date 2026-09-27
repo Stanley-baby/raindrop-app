@@ -7,9 +7,9 @@ import { target } from '~target'
 import { useSelector } from 'react-redux'
 
 export default function BookmarksItemContextmenu({
-    _id, link, important, access, reparse, cache, fileType, type,
+    _id, link, important, access, reparse, rechecking, cache, fileType, type,
     onContextMenuClose, onRemoveClick, onCopyLinkClick,
-    onSelectClick, onImportantClick, onReparseClick
+    onSelectClick, onImportantClick, onReparseClick, onRecheckClick
 }) {
     const ai_assistant = useSelector(state=>state.config.ai_assistant)
 
@@ -67,6 +67,11 @@ export default function BookmarksItemContextmenu({
                                 {t.s('refreshPreview')}
                             </MenuItem>
                         ) : null}
+
+                        <MenuItem onClick={rechecking ? undefined : onRecheckClick}>
+                            <Icon name='broken' />
+                            {rechecking ? t.s('recheckingLink') : t.s('recheckLink')}
+                        </MenuItem>
 
                         <MenuSeparator />
 

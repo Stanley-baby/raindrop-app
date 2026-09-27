@@ -12,12 +12,11 @@ import Icon from '~co/common/icon'
 import TagsField from '~co/tags/field'
 import Suggested from './suggested'
 
-export default function BookmarkEditFormTags({ autoFocus, item, onCommit, onChange, onSave }) {
+export default function BookmarkEditFormTags({ autoFocus, item, onCommit, onChange, onSave, onSuggestionError }) {
     const dispatch = useDispatch()
     const [suggesting, setSuggesting] = useState(false)
     const [savingSuggestion, setSavingSuggestion] = useState(false)
     const [selectedTags, setSelectedTags] = useState({})
-    const [suggestError, setSuggestError] = useState('')
     const baseTagsRef = useRef(Array.from(item.tags || []))
     const aiEnabled = useSelector(state=>state.config.ai_suggestions)
     const pro = useSelector(state=>isPro(state))
@@ -62,24 +61,24 @@ export default function BookmarkEditFormTags({ autoFocus, item, onCommit, onChan
 
     const onSuggest = useCallback(()=>{
         if (suggesting) return
-        setSuggestError('')
+        onSuggestionError?.('')
         setSuggesting(true)
         dispatch(suggestFields(item, true,
             ()=>{
                 setSuggesting(false)
-                setSuggestError('')
+                onSuggestionError?.('')
             },
             suggestionError=>{
                 setSuggesting(false)
-                setSuggestError(suggestionError?.message || t.s('server'))
+                onSuggestionError?.(suggestionError?.message || t.s('server'))
             },
             'tags'))
-    }, [dispatch, item, suggesting])
+    }, [dispatch, item, onSuggestionError, suggesting])
 
     useEffect(()=>{
         baseTagsRef.current = Array.from(item.tags || [])
         setSelectedTags({})
-        setSuggestError('')
+        onSuggestionError?.('')
     }, [item._id, item.link])
 
     const canSuggest = aiEnabled && (pro || independentService)
@@ -111,11 +110,6 @@ export default function BookmarkEditFormTags({ autoFocus, item, onCommit, onChan
                     </Button>}
                     {suggesting && <span className={s.status} role='status' aria-live='polite'>{t.s('aiGenerating')}</span>}
                 </div>
-
-                {suggestError && <div className={s.error} role='alert'>
-                    <span>{suggestError}</span>
-                    <Button as='button' type='button' variant='link' size='small' onClick={onSuggest}>{t.s('tryAgain')}</Button>
-                </div>}
 
                 <Suggested
                     item={item}

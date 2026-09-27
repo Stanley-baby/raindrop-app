@@ -15,19 +15,18 @@ The shortest path is:
 ```sh
 npm i
 cp cloudflare/wrangler.toml cloudflare/wrangler.private.toml
-# edit the selfhosted block and set your Cloudflare resource IDs and origins
+# edit the selfhosted block and set your Cloudflare resource IDs; set origins only for split-domain deployments
 npx wrangler d1 migrations apply raindrop-db-selfhosted --remote \
   --config cloudflare/wrangler.private.toml --env selfhosted
 npx wrangler deploy --config cloudflare/wrangler.private.toml --env selfhosted
 ```
 
-Build the Web client and manually installable extension ZIPs with your own
-origins:
+Build the Web client and manually installable extension ZIPs without embedding
+host-specific origins. The Web client resolves API, app, AI, archive, and
+public-content URLs from the current browser origin; the self-hosted extension
+asks for its Web and API roots on first install:
 
 ```sh
-export API_ORIGIN=https://api.example.com
-export APP_ORIGIN=https://app.example.com
-export AI_PAGE_ORIGIN=https://app.example.com/ai
 export REPOSITORY_URL=https://github.com/your-org/your-repo
 export HELP_ORIGIN=https://github.com/your-org/your-repo
 npm run build:selfhosted
@@ -47,7 +46,7 @@ Be sure to run `npm i` before calling any commands below
 | target   | command | notes |
 |----------|---------|-------|
 | web      | `npm run build` |
-| self-hosted web | `npm run build:selfhosted` | Uses operator-supplied origins |
+| self-hosted web | `npm run build:selfhosted` | Resolves the current Web origin at runtime |
 | electron | `npm run build:electron` |
 | chrome   | `npm run build:extension:chrome` |
 | self-hosted extensions | `npm run build:extension:selfhosted` | Chrome, Edge, Firefox, Opera ZIPs |

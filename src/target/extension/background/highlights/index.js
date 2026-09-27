@@ -34,12 +34,22 @@ async function onMessage({ type, payload }, sender) {
 async function onTabActivated({ tabId }) {
     if (!tabId) return
 
-    const tab = await browser.tabs.get(tabId)
+    let tab
+    try {
+        tab = await browser.tabs.get(tabId)
+    } catch {
+        return
+    }
 
     if (!tab || !tab.url || !tab.active || tab.status != 'complete')
         return
 
-    await sync(tab)
+    try {
+        await sync(tab)
+    } catch (error) {
+        if (!/No tab with id/i.test(String(error?.message || error)))
+            console.error(error)
+    }
 }
 
 async function onTabUpdated(tabId, changeInfo={}) {

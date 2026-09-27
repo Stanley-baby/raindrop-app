@@ -9,12 +9,16 @@ const CopyPlugin = require('copy-webpack-plugin')
 const ZipPlugin = require('zip-webpack-plugin')
 
 module.exports = (env={}, args={}) => {
-    const buildEnvironment = resolveEnvironment(env)
+    const buildEnvironment = resolveEnvironment({
+        ...env,
+        runtimeDomainMode: env.environment === 'selfhosted'
+    })
     const outputDirectory = buildEnvironment.name == 'local' ? 'dev' : buildEnvironment.name == 'production' ? 'prod' : buildEnvironment.name
     const outputPath = path.resolve(__dirname, '..', 'dist', env.vendor, outputDirectory)
 
     env.filename = '[name]'
     env.environment = buildEnvironment.name
+    env.runtimeDomainMode = buildEnvironment.runtimeDomainMode
     env.apiOrigin = buildEnvironment.apiOrigin
     env.aiPageOrigin = buildEnvironment.aiPageOrigin
     env.appOrigin = buildEnvironment.appOrigin
@@ -79,7 +83,8 @@ module.exports = (env={}, args={}) => {
                         repositoryUrl: buildEnvironment.repositoryUrl,
                         independentService: buildEnvironment.independentService,
                         turnstileSiteKey: buildEnvironment.turnstileSiteKey,
-                        turnstileEnabled: buildEnvironment.turnstileEnabled
+                        turnstileEnabled: buildEnvironment.turnstileEnabled,
+                        runtimeDomainMode: buildEnvironment.runtimeDomainMode
                     },
                     filename: 'sidepanel.html',
                     scriptLoading: 'blocking',
@@ -105,8 +110,13 @@ module.exports = (env={}, args={}) => {
                                     .replaceAll('__API_ORIGIN__', buildEnvironment.apiOrigin)
                                     .replaceAll('__APP_ORIGIN__', buildEnvironment.appOrigin)
                                     .replaceAll('__HELP_ORIGIN__', buildEnvironment.helpOrigin)
+                                    .replaceAll('__RUNTIME_DOMAIN_MODE__', JSON.stringify(buildEnvironment.runtimeDomainMode))
                                     .replaceAll('__DOWNLOAD_URL__', `${buildEnvironment.repositoryUrl}/releases`)
                             }
+                        },
+                        {
+                            from: 'data/modules/runtime-origin.js',
+                            to: 'welcome/runtime-origin.js'
                         }
                     ]
                 }),

@@ -41,3 +41,29 @@ cloudflare/wrangler.private.toml
 
 # Local agent, QA, screenshot, and staging artifacts (never part of source/release)
 /.local/
+
+# Local task scratch, audit, browser, and prototype artifacts (never release)
+/.ai-gateway-v1/
+/.ai-prompt-optimizer-v1/
+/.ai-prompt-ui-polish-v3/
+/.ai-settings-repair-v2/
+/.ai-settings-ui-v1/
+/.ai-settings-ui-v2/
+/.broken-links-v1/
+/.cloudflare-bookmark-metadata-fix/
+/.codex-audit/
+/.duplicate-v15/
+/.extension-name/
+/.playwright-cli/
+/.selfhosted-cloudflare-bookmark-deploy/
+/.ui-prototype-ai-settings-v2/
+/.ui-prototype-ai-settings/
+/.web-archive-v2/
+/.workers-ai-model-fix/
+/ai-collection-suggestions/
+/ai-suggestion-autosave-fix/
+/ai-suggestions-correction/
+/ai-suggestions-fix/
+/popup-loading-diagnosis/
+/selfhosted-build-fix/
+/docs/duplicate-reference-comparison.md

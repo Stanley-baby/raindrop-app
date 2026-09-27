@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { webcrypto } from 'node:crypto'
 import test from 'node:test'
-import worker from '../src/index.js'
+import worker, { auditRoute } from '../src/index.js'
 
 /* global Uint8Array, globalThis */
 
@@ -150,6 +150,101 @@ const envFor = (db, bucket, queue, scanner = true) => ({
 
 const request = (path, options = {}) => new Request('https://api.example.test' + path, options)
 const cookie = 'rd_session=test-session'
+
+test('cover render endpoint returns a safe, cached WebP screenshot', async () => {
+    const db = new ContentDatabase()
+    const env = envFor(db, new MemoryBucket(), { send: async () => {} }, false)
+    let screenshotOptions
+    env.BROWSER_RENDERING = {
+        quickAction: async (action, options) => {
+            assert.equal(action, 'screenshot')
+            screenshotOptions = options
+            return new Response(Uint8Array.from([82, 73, 70, 70]), { headers: { 'Content-Type': 'image/webp' } })
+        }
+    }
+
+    const target = 'https://public.example.test/page'
+    const renderRequest = request('/render/' + encodeURIComponent(target) + '?format=webp')
+    const rendered = await worker.fetch(renderRequest, env)
+
+    assert.equal(auditRoute(renderRequest), '/render/:source')
+    assert.equal(rendered.status, 200)
+    assert.equal(rendered.headers.get('Content-Type'), 'image/webp')
+    assert.equal(rendered.headers.get('Cache-Control'), 'public, max-age=3600')
+    assert.equal(rendered.headers.get('X-Content-Type-Options'), 'nosniff')
+    assert.deepEqual([...new Uint8Array(await rendered.arrayBuffer())], [82, 73, 70, 70])
+    assert.equal(screenshotOptions.cacheTTL, 3600)
+    assert.deepEqual(screenshotOptions.gotoOptions, { waitUntil: 'load', timeout: 15000 })
+    assert.deepEqual(screenshotOptions.screenshotOptions, { type: 'webp', quality: 75 })
+    assert.equal('allowRequestPattern' in screenshotOptions, false)
+})
+
+test('cover render endpoint proxies image sources without spending a Browser Run request', async t => {
+    const env = envFor(new ContentDatabase(), new MemoryBucket(), { send: async () => {} }, false)
+    const originalFetch = globalThis.fetch
+    const source = 'https://cdn.public.example.test/cover.jpg'
+    const bytes = Uint8Array.from([137, 80, 78, 71])
+    const requested = []
+    globalThis.fetch = async url => {
+        requested.push(new URL(url).href)
+        return new Response(bytes, { headers: { 'Content-Type': 'image/jpeg' } })
+    }
+    t.after(() => { globalThis.fetch = originalFetch })
+    env.BROWSER_RENDERING = { quickAction: async () => assert.fail('direct images should not invoke Browser Run') }
+
+    const response = await worker.fetch(request('/render/' + encodeURIComponent(source) + '?format=webp'), env)
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('Content-Type'), 'image/jpeg')
+    assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [...bytes])
+    assert.deepEqual(requested, [source])
+})
+
+test('cover render endpoint fetches an Open Graph cover before rendering the page', async t => {
+    const env = envFor(new ContentDatabase(), new MemoryBucket(), { send: async () => {} }, false)
+    const originalFetch = globalThis.fetch
+    const source = 'https://public.example.test/page'
+    const image = 'https://cdn.public.example.test/cover.webp'
+    globalThis.fetch = async url => new URL(url).href === image
+        ? new Response(Uint8Array.from([82, 73, 70, 70]), { headers: { 'Content-Type': 'image/webp' } })
+        : new Response(`<html><meta property="og:image" content="${image}"></html>`, { headers: { 'Content-Type': 'text/html' } })
+    t.after(() => { globalThis.fetch = originalFetch })
+    env.BROWSER_RENDERING = { quickAction: async () => assert.fail('Open Graph covers should not invoke Browser Run') }
+
+    const response = await worker.fetch(request('/render/' + encodeURIComponent(source)), env)
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('Content-Type'), 'image/webp')
+    assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [82, 73, 70, 70])
+})
+
+test('cover render endpoint rejects private targets and non-image fallbacks', async () => {
+    const db = new ContentDatabase()
+    const env = envFor(db, new MemoryBucket(), { send: async () => {} }, false)
+    let rendered = false
+    env.BROWSER_RENDERING = { quickAction: async () => {
+        rendered = true
+        return new Response('<html>page</html>', { headers: { 'Content-Type': 'text/html' } })
+    } }
+
+    const blocked = await worker.fetch(request('/render/' + encodeURIComponent('http://127.0.0.1/private')), env)
+    assert.equal(blocked.status, 400)
+    assert.equal((await blocked.json()).error, 'url_not_public')
+    assert.equal(rendered, false)
+
+    env.BROWSER_RENDERING = { quickAction: async () => new Response('rate limited', { status: 429 }) }
+    const rejected = await worker.fetch(request('/render/' + encodeURIComponent('https://public.example.test/page')), env)
+    assert.equal(rejected.status, 502)
+    assert.equal((await rejected.json()).errorMessage, 'Browser Run returned HTTP 429')
+
+    env.BROWSER_RENDERING = { fetch: async () => new Response('<html>page</html>', { headers: { 'Content-Type': 'text/html' } }) }
+    const fallback = await worker.fetch(request('/render/' + encodeURIComponent('https://public.example.test/page')), env)
+    assert.equal(fallback.status, 503)
+    assert.equal((await fallback.json()).error, 'capture_renderer_unavailable')
+
+    const wrongMethod = await worker.fetch(request('/render/' + encodeURIComponent('https://public.example.test/page'), { method: 'POST' }), env)
+    assert.equal(wrongMethod.status, 405)
+})
 
 test('new bookmarks persist multiple media candidates', async () => {
     const db = new ContentDatabase()

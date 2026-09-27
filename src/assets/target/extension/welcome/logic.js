@@ -40,6 +40,18 @@ function detectBrowser(){
     return ''
 }
 
+const runtimeDomainMode = __RUNTIME_DOMAIN_MODE__
+const extensionApi = window.browser || window.chrome
+const storageGet = key => new Promise((resolve, reject) => {
+    if (window.browser)
+        return window.browser.storage.sync.get(key).then(resolve, reject)
+    extensionApi.storage.sync.get(key, value => {
+        const error = extensionApi.runtime.lastError
+        if (error) reject(new Error(error.message))
+        else resolve(value)
+    })
+})
+
 const scrollByPage = debounce((right)=>{
     window.scrollTo({
         top: 0,
@@ -64,7 +76,26 @@ window.onload = ()=>{
 
     //update authenticated status class
     async function updateAuthenticatedClass() {
-        const res = await fetch('__API_ORIGIN__/v1/user', { credentials: 'include' } )
+        let apiOrigin = '__API_ORIGIN__'
+        let appOrigin = '__APP_ORIGIN__'
+        if (runtimeDomainMode) {
+            const settings = (await storageGet('raindropRuntimeDomain')).raindropRuntimeDomain || {}
+            apiOrigin = settings.apiOrigin || ''
+            appOrigin = settings.appOrigin || ''
+            document.querySelectorAll('[data-api-path]').forEach(link => {
+                link.hidden = !apiOrigin
+                if (apiOrigin) link.href = apiOrigin + link.dataset.apiPath
+            })
+            document.querySelectorAll('[data-app-path]').forEach(link => {
+                link.hidden = !appOrigin
+                if (appOrigin) link.href = appOrigin + link.dataset.appPath
+            })
+        }
+        if (!apiOrigin) {
+            document.documentElement.classList.remove('authenticated')
+            return
+        }
+        const res = await fetch(apiOrigin + '/v1/user', { credentials: 'include' } )
         const { result } = await res.json()
         if (result) 
             document.documentElement.classList.add('authenticated')
@@ -134,6 +165,6 @@ window.onload = ()=>{
 
     document.querySelector('#decline-uninstall').addEventListener('click', e=>{
         e.preventDefault()
-        browser.management.uninstallSelf({ showConfirmDialog: false })
+        extensionApi.management.uninstallSelf({ showConfirmDialog: false })
     })
 }

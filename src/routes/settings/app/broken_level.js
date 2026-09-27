@@ -17,7 +17,7 @@ function SettingsAppBrokenLevel({ broken_level, set }) {
             <div>
                 <Select 
                     variant='outline'
-                    value={broken_level}
+                    value={broken_level || 'default'}
                     onChange={e=>set('broken_level', e.target.value)}>
                     {[
                         ['basic', 'Basic mode'],

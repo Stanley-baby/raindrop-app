@@ -17,7 +17,7 @@ import CollectionIcon from '~co/collections/item/icon'
 import Picker from '~co/collections/picker'
 import Suggested from './suggested'
 
-export default function BookmarkEditFormCollection({ item, onChange, onSave, registerBeforeSave }) {
+export default function BookmarkEditFormCollection({ item, onChange, onSave, registerBeforeSave, onSuggestionError }) {
     const dispatch = useDispatch()
 
     const [pick, setPick] = useState(false)
@@ -25,7 +25,6 @@ export default function BookmarkEditFormCollection({ item, onChange, onSave, reg
     const [savingSuggestion, setSavingSuggestion] = useState(false)
     const [selectedSuggestion, setSelectedSuggestion] = useState(null)
     const [pendingLabel, setPendingLabel] = useState('')
-    const [suggestError, setSuggestError] = useState('')
     const aiEnabled = useSelector(state=>state.config.ai_suggestions)
     const pro = useSelector(state=>isPro(state))
     const collectionItems = useSelector(state=>state.collections?.items || {})
@@ -150,10 +149,11 @@ export default function BookmarkEditFormCollection({ item, onChange, onSave, reg
         pendingTitleRef.current = title
         pendingParentIdRef.current = parentId
         pendingCategoryRef.current = category || ''
-        setPendingLabel([category, title].filter(Boolean).join(' / '))
+        const parent = Number(parentId) > 0 ? collectionItems[parentId] : null
+        setPendingLabel([parent?.title || category, title].filter(Boolean).join(' / '))
         if (item.collectionId != previousId)
             onChange({ collectionId: previousId })
-    }, [clearPending, item.collectionId, onChange, savingSuggestion, selectedSuggestion])
+    }, [clearPending, collectionItems, item.collectionId, onChange, savingSuggestion, selectedSuggestion])
 
     const onRestore = useCallback(()=>{
         if (savingSuggestion || !selectedSuggestion) return
@@ -165,25 +165,25 @@ export default function BookmarkEditFormCollection({ item, onChange, onSave, reg
 
     const onSuggest = useCallback(()=>{
         if (suggesting) return
-        setSuggestError('')
+        onSuggestionError?.('')
         setSuggesting(true)
         dispatch(suggestFields(item, true,
             ()=>{
                 setSuggesting(false)
-                setSuggestError('')
+                onSuggestionError?.('')
             },
             suggestionError=>{
                 setSuggesting(false)
-                setSuggestError(suggestionError?.message || t.s('server'))
+                onSuggestionError?.(suggestionError?.message || t.s('server'))
             },
             'collection'))
-    }, [dispatch, item, suggesting])
+    }, [dispatch, item, onSuggestionError, suggesting])
 
     useEffect(()=>{
         originalCollectionId.current = item.collectionId
         clearPending()
         setSelectedSuggestion(null)
-        setSuggestError('')
+        onSuggestionError?.('')
     }, [clearPending, item._id, item.link])
 
     const canSuggest = aiEnabled && (pro || independentService)
@@ -231,11 +231,6 @@ export default function BookmarkEditFormCollection({ item, onChange, onSave, reg
                         <Icon name='refresh' />
                     </Button>}
                 </div>
-
-                {suggestError && <div className={s.error} role='alert'>
-                    <span>{suggestError}</span>
-                    <Button as='button' type='button' variant='link' size='small' onClick={onSuggest}>{t.s('tryAgain')}</Button>
-                </div>}
 
                 <Suggested
                     item={item}

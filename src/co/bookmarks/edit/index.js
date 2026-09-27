@@ -20,6 +20,12 @@ class EditBookmarkContainer extends React.Component {
 		buttons:			undefined //component
 	}
 
+	formSave = null
+
+	registerFormSave = handler=>{
+		this.formSave = handler || null
+	}
+
 	componentDidMount() {
 		this.handlers.onLoad()
 
@@ -79,7 +85,7 @@ class EditBookmarkContainer extends React.Component {
 		onCommit: async()=>{
 			const { status } = this.props
 			if (status != 'new')
-				return this.handlers.onSave()
+				return (this.formSave || this.handlers.onSave)()
 		},
     
         onSave: ()=>{
@@ -135,7 +141,8 @@ class EditBookmarkContainer extends React.Component {
 			<div className={s.edit}>
 				<Component 
 					{...this.props}
-					{...this.handlers} />
+					{...this.handlers}
+					registerFormSave={this.registerFormSave} />
 
 				{/* When react-router route change commit unsaved changes */}
 				{/* {<Prompt 

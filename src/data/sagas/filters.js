@@ -1,10 +1,11 @@
-import { call, put, debounce, takeEvery, select, all, delay } from 'redux-saga/effects'
+import { call, put, debounce, takeEvery, select, all, delay, take } from 'redux-saga/effects'
 import Api from '../modules/api'
+import dedupeGet from '../modules/dedupeGet'
 import { getUrl } from '../helpers/bookmarks'
 
 import { FILTERS_AUTOLOAD, FILTERS_LOAD_PRE, FILTERS_LOAD_REQ, FILTERS_LOAD_SUCCESS, FILTERS_LOAD_ERROR } from '../constants/filters'
 import { TAGS_LOAD_SUCCESS, TAGS_LOAD_ERROR } from '../constants/tags'
-import { BOOKMARK_CREATE_SUCCESS, BOOKMARK_UPDATE_SUCCESS, BOOKMARK_REMOVE_SUCCESS, SPACE_LOAD_PRE, SPACE_REFRESH_REQ } from '../constants/bookmarks'
+import { BOOKMARK_CREATE_SUCCESS, BOOKMARK_UPDATE_SUCCESS, BOOKMARK_REMOVE_SUCCESS, SPACE_LOAD_PRE, SPACE_REFRESH_REQ, SPACE_LOAD_SUCCESS, SPACE_LOAD_ERROR } from '../constants/bookmarks'
 import { COLLECTION_REMOVE_SUCCESS } from '../constants/collections'
 
 //Requests
@@ -65,7 +66,8 @@ function* preLoad({ spaceId, ignore, query }) {
 	if (ignore||typeof spaceId == 'undefined') return
 
 	try{
-		const { lastAction, version } = yield call(Api.get, `collection/${parseInt(spaceId)||0}/lastAction`)
+		yield waitForBookmarks(spaceId)
+		const { lastAction, version } = yield call(dedupeGet, `collection/${parseInt(spaceId)||0}/lastAction`)
 
 		yield put({
 			type: FILTERS_LOAD_REQ,
@@ -81,6 +83,16 @@ function* preLoad({ spaceId, ignore, query }) {
 			query,
 			error
 		})
+	}
+}
+
+function* waitForBookmarks(spaceId) {
+	const status = yield select(state=>state.bookmarks?.spaces?.[spaceId]?.status?.main)
+	if (status != 'loading') return
+
+	while (true) {
+		const action = yield take([SPACE_LOAD_SUCCESS, SPACE_LOAD_ERROR])
+		if (String(action.spaceId) == String(spaceId)) return
 	}
 }
 
