@@ -91,6 +91,7 @@ const initialState = Immutable({
 	ai_workers_model:			'',
 	ai_thinking_enabled:		false,
 	ai_thinking_level:		'medium',
+	onedrive_cleanup_mode:	'recycle_bin',
 })
 
 //this keys can be kept untouched on reset

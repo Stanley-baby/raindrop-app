@@ -27,6 +27,7 @@ const migrationTaskType = 'migration_import'
 const linkCheckTaskType = 'link_check'
 const duplicateScanTaskType = 'duplicate_scan'
 const backupTaskType = 'backup'
+const backupCleanupTaskType = 'backup_cleanup'
 const backgroundTaskTypes = new Set([metadataTaskType, attachmentTaskType, captureTaskType, archiveTaskType, migrationTaskType, linkCheckTaskType, duplicateScanTaskType])
 const metadataMaxRetries = 3
 const metadataMaxRedirects = 5
@@ -50,6 +51,7 @@ const backupDailyRetention = 30
 const backupMonthlyRetention = 12
 const backupMaxBytes = 16 * 1024 * 1024
 const backupUserPageSize = 100
+const backupCleanupBatchSize = 20
 const backupProviders = new Set(['gdrive', 'onedrive', 'webdav'])
 const brokenLinkModes = new Set(['basic', 'default', 'strict', 'off'])
 const brokenLinkNormalIntervalMs = 24 * 60 * 60 * 1000
@@ -359,6 +361,9 @@ const userConfigPatch = value => {
         return null
     if (Object.prototype.hasOwnProperty.call(patch, 'ai_thinking_level') &&
         !['low', 'medium', 'high'].includes(patch.ai_thinking_level))
+        return null
+    if (Object.prototype.hasOwnProperty.call(patch, 'onedrive_cleanup_mode') &&
+        !['recycle_bin', 'permanent'].includes(patch.onedrive_cleanup_mode))
         return null
     for (const field of ['ai_collection_prompt', 'ai_tag_prompt', 'ai_note_prompt']) {
         if (Object.prototype.hasOwnProperty.call(patch, field) &&
@@ -2945,7 +2950,7 @@ const processArchiveTask = async (env, taskId) => {
     }
 }
 
-const processTask = async (env, taskId, type) => {
+const processTask = async (env, taskId, type, payload = {}) => {
     if (type === metadataTaskType) return processMetadataTask(env, taskId)
     if (type === linkCheckTaskType) return processLinkCheckTask(env, taskId)
     if (type === attachmentTaskType) return processAttachmentScanTask(env, taskId)
@@ -2954,6 +2959,7 @@ const processTask = async (env, taskId, type) => {
     if (type === migrationTaskType) return processMigrationTask(env, taskId)
     if (type === duplicateScanTaskType) return processDuplicateScanTask(env, taskId)
     if (type === backupTaskType) return processBackupTask(env, taskId)
+    if (type === backupCleanupTaskType) return processBackupCleanupTask(env, taskId, payload)
     return { action: 'skip' }
 }
 
@@ -3282,6 +3288,22 @@ const backupRetention = (env, kind) => integerEnv(env,
     [kind === 'daily' ? 'BACKUP_RETENTION_DAILY' : 'BACKUP_RETENTION_MONTHLY'],
     kind === 'daily' ? backupDailyRetention : backupMonthlyRetention)
 
+const backupCleanupEnabled = env => ['true', '1', 'on', 'yes'].includes(
+    String(env.ONEDRIVE_BACKUP_CLEANUP_ENABLED || '').trim().toLowerCase())
+
+const backupCleanupMode = env => String(env.ONEDRIVE_BACKUP_CLEANUP_MODE || 'recycle_bin').trim().toLowerCase() === 'permanent'
+    ? 'permanent'
+    : 'recycle_bin'
+
+const userBackupCleanupMode = async (env, userId) => {
+    try {
+        const user = await env.DB.prepare('SELECT config FROM users WHERE id = ?').bind(userId).first()
+        const configured = parseUserConfig(user?.config).onedrive_cleanup_mode
+        if (['recycle_bin', 'permanent'].includes(configured)) return configured
+    } catch {}
+    return backupCleanupMode(env)
+}
+
 const selectBackup = async (env, id, userId = null) => {
     const where = userId === null ? 'id = ?' : 'id = ? AND user_id = ?'
     const values = userId === null ? [id] : [id, userId]
@@ -3464,6 +3486,49 @@ const refreshOneDriveCredentials = async (env, connection, credentials) => {
     return refreshed
 }
 
+const oneDriveApiOrigin = env => String(env.ONEDRIVE_API_ORIGIN || 'https://graph.microsoft.com').replace(/\/$/, '')
+
+const oneDriveRequest = (env, credentials, path, method = 'GET') => new Request(
+    oneDriveApiOrigin(env) + '/v1.0' + path,
+    { method, headers: { Authorization: 'Bearer ' + credentials.accessToken, Accept: 'application/json' } }
+)
+
+const oneDriveResponseFailure = response => {
+    const failure = new Error('OneDrive backup cleanup failed with HTTP ' + response.status)
+    failure.status = response.status
+    const retryAfter = Number(response.headers.get('Retry-After') || 0)
+    if (Number.isFinite(retryAfter) && retryAfter > 0) failure.retryAfter = retryAfter
+    return failure
+}
+
+const oneDriveRemoteIdByPath = async (env, credentials, remotePath) => {
+    const response = await fetch(oneDriveRequest(env, credentials, '/me/drive/root:/' + encodeURIComponent(remotePath)))
+    if (response.status === 404) return null
+    if (!response.ok) throw oneDriveResponseFailure(response)
+    let body
+    try { body = await response.json() } catch { body = null }
+    if (!body?.id) throw new Error('OneDrive backup cleanup returned no remote file id')
+    return String(body.id)
+}
+
+const deleteOneDriveRemote = async (env, credentials, remoteId, mode) => {
+    if (mode === 'permanent') {
+        const driveResponse = await fetch(oneDriveRequest(env, credentials, '/me/drive'))
+        if (!driveResponse.ok) throw oneDriveResponseFailure(driveResponse)
+        let drive
+        try { drive = await driveResponse.json() } catch { drive = null }
+        if (!drive?.id) throw new Error('OneDrive backup cleanup returned no drive id')
+        const response = await fetch(oneDriveRequest(env, credentials,
+            '/drives/' + encodeURIComponent(String(drive.id)) + '/items/' + encodeURIComponent(remoteId) + '/permanentDelete', 'POST'))
+        if (response.status === 404) return
+        if (!response.ok) throw oneDriveResponseFailure(response)
+        return
+    }
+    const response = await fetch(oneDriveRequest(env, credentials, '/me/drive/items/' + encodeURIComponent(remoteId), 'DELETE'))
+    if (response.status === 404) return
+    if (!response.ok) throw oneDriveResponseFailure(response)
+}
+
 const copyExternalBackup = async (env, backup, bytes) => {
     const connection = await env.DB.prepare(`SELECT id, provider, encrypted_credentials FROM backup_connections
         WHERE user_id = ? AND is_default = 1`).bind(backup.user_id).first()
@@ -3477,17 +3542,29 @@ const copyExternalBackup = async (env, backup, bytes) => {
         const request = backupProviderRequest(env, connection.provider, credentials, 'copy', filename, bytes)
         const response = connection.provider === 'webdav' ? await fetchWebdav(env, request) : await fetch(request)
         if (!response.ok) throw new Error('External backup copy failed with HTTP ' + response.status)
+        let remoteId = null
+        if (connection.provider === 'onedrive') {
+            try {
+                const body = await response.clone().json()
+                if (body?.id) remoteId = String(body.id)
+            } catch {}
+        }
         await env.DB.prepare(`INSERT INTO external_backup_copies
-            (backup_id, connection_id, status, remote_path, error_message, created_at, completed_at)
-            VALUES (?, ?, 'succeeded', ?, NULL, ?, ?)
+            (backup_id, connection_id, status, remote_path, remote_id, cleanup_status, cleanup_attempts,
+                last_cleanup_error, deleted_at, error_message, created_at, completed_at)
+            VALUES (?, ?, 'succeeded', ?, ?, 'active', 0, NULL, NULL, NULL, ?, ?)
             ON CONFLICT(backup_id, connection_id) DO UPDATE SET status = 'succeeded', remote_path = excluded.remote_path,
-            error_message = NULL, completed_at = excluded.completed_at`).bind(backup.id, connection.id, filename, now, now).run()
+            remote_id = COALESCE(excluded.remote_id, external_backup_copies.remote_id), cleanup_status = 'active',
+            cleanup_attempts = 0, last_cleanup_error = NULL, deleted_at = NULL, error_message = NULL,
+            completed_at = excluded.completed_at`).bind(backup.id, connection.id, filename, remoteId, now, now).run()
     } catch (failure) {
         await env.DB.prepare(`INSERT INTO external_backup_copies
-            (backup_id, connection_id, status, remote_path, error_message, created_at, completed_at)
-            VALUES (?, ?, 'failed', NULL, ?, ?, ?)
-            ON CONFLICT(backup_id, connection_id) DO UPDATE SET status = 'failed', error_message = excluded.error_message,
-            completed_at = excluded.completed_at`).bind(backup.id, connection.id, failure.message, now, now).run()
+            (backup_id, connection_id, status, remote_path, remote_id, cleanup_status, cleanup_attempts,
+                last_cleanup_error, deleted_at, error_message, created_at, completed_at)
+            VALUES (?, ?, 'failed', NULL, NULL, 'active', 0, NULL, NULL, ?, ?, ?)
+            ON CONFLICT(backup_id, connection_id) DO UPDATE SET status = 'failed', remote_path = NULL,
+            error_message = excluded.error_message, completed_at = excluded.completed_at`).bind(
+            backup.id, connection.id, failure.message, now, now).run()
         throw failure
     }
 }
@@ -3602,6 +3679,146 @@ const readBackupSnapshot = async (env, backup) => {
     }
 }
 
+const selectOneDriveBackupCopy = async (env, backupId, connectionId = null) => {
+    const where = connectionId === null
+        ? 'e.backup_id = ? AND e.status = \'succeeded\' AND c.provider = \'onedrive\''
+        : 'e.backup_id = ? AND e.connection_id = ? AND e.status = \'succeeded\' AND c.provider = \'onedrive\''
+    const values = connectionId === null ? [backupId] : [backupId, connectionId]
+    return env.DB.prepare(`SELECT e.backup_id, e.connection_id, e.status, e.remote_path, e.remote_id,
+        e.cleanup_status, e.cleanup_attempts, e.last_cleanup_error, e.deleted_at,
+        c.user_id, c.provider, c.encrypted_credentials
+        FROM external_backup_copies e JOIN backup_connections c ON c.id = e.connection_id
+        WHERE ${where} LIMIT 1`).bind(...values).first()
+}
+
+const enqueueBackupCleanup = async (env, backupId, connectionId) => {
+    if (!env.TASK_QUEUE?.send) return false
+    try {
+        await env.TASK_QUEUE.send({
+            taskId: String(backupId),
+            type: backupCleanupTaskType,
+            connectionId: String(connectionId)
+        })
+        return true
+    } catch {
+        return false
+    }
+}
+
+const scheduleBackupCleanup = async (env, backup, copy) => {
+    if (!['active', 'pending'].includes(String(copy.cleanup_status || 'active'))) return false
+    await env.DB.prepare(`UPDATE external_backup_copies SET cleanup_status = 'pending',
+        cleanup_attempts = cleanup_attempts + 1, last_cleanup_error = NULL
+        WHERE backup_id = ? AND connection_id = ? AND status = 'succeeded'
+        AND cleanup_status IN ('active', 'pending')`).bind(backup.id, copy.connection_id).run()
+    return enqueueBackupCleanup(env, backup.id, copy.connection_id)
+}
+
+const updateBackupCleanup = async (env, backupId, connectionId, status, details = {}) => {
+    const now = Date.now()
+    await env.DB.prepare(`UPDATE external_backup_copies SET cleanup_status = ?, last_cleanup_error = ?,
+        deleted_at = ? WHERE backup_id = ? AND connection_id = ?`).bind(
+        status, details.error || null, status === 'deleted' ? now : null, backupId, connectionId).run()
+}
+
+const removeLocalBackup = async (env, backup) => {
+    if (env.BACKUP_BUCKET?.delete) await env.BACKUP_BUCKET.delete(backup.object_key)
+    await env.DB.prepare('DELETE FROM backups WHERE id = ?').bind(backup.id).run()
+}
+
+const cleanupRetry = async (env, backup, copy, failure) => {
+    const message = String(failure?.message || 'OneDrive backup cleanup failed')
+    await updateBackupCleanup(env, backup.id, copy.connection_id, 'pending', { error: message })
+    return {
+        action: 'retry',
+        delaySeconds: Math.max(1, Math.min(300, Number(failure?.retryAfter || metadataRetryDelays[0])))
+    }
+}
+
+const processBackupCleanupTask = async (env, taskId, payload = {}) => {
+    const rawTaskId = String(taskId || '')
+    const [backupId, embeddedConnectionId] = rawTaskId.split(':')
+    const connectionId = String(payload.connectionId || embeddedConnectionId || '')
+    if (!backupId || !connectionId) return { action: 'skip' }
+    const backup = await selectBackup(env, backupId)
+    const copy = await selectOneDriveBackupCopy(env, backupId, connectionId)
+    if (!backup || !copy || Number(backup.user_id) !== Number(copy.user_id)) return { action: 'skip' }
+    if (copy.cleanup_status === 'blocked' || copy.cleanup_status === 'orphaned') return { action: 'skip' }
+    if (copy.cleanup_status === 'deleted') {
+        await removeLocalBackup(env, backup)
+        return { action: 'ack' }
+    }
+
+    const connection = {
+        id: copy.connection_id,
+        provider: copy.provider,
+        encrypted_credentials: copy.encrypted_credentials
+    }
+    let credentials
+    try {
+        credentials = await decryptCredentials(env, connection.encrypted_credentials)
+    } catch (failure) {
+        await updateBackupCleanup(env, backup.id, connectionId, 'blocked', { error: failure.message })
+        return { action: 'ack' }
+    }
+
+    let remoteId = copy.remote_id ? String(copy.remote_id) : null
+    let refreshed = false
+    for (;;) {
+        try {
+            if (!remoteId && !copy.remote_path) {
+                await updateBackupCleanup(env, backup.id, connectionId, 'orphaned', {
+                    error: 'The OneDrive backup file has no recorded path'
+                })
+                return { action: 'ack' }
+            }
+            if (!remoteId) {
+                remoteId = await oneDriveRemoteIdByPath(env, credentials, copy.remote_path)
+                if (!remoteId) {
+                    await updateBackupCleanup(env, backup.id, connectionId, 'orphaned', {
+                        error: 'The OneDrive backup file was not found'
+                    })
+                    return { action: 'ack' }
+                }
+                await env.DB.prepare('UPDATE external_backup_copies SET remote_id = ? WHERE backup_id = ? AND connection_id = ?')
+                    .bind(remoteId, backup.id, connectionId).run()
+            }
+            await deleteOneDriveRemote(env, credentials, remoteId, await userBackupCleanupMode(env, backup.user_id))
+            await updateBackupCleanup(env, backup.id, connectionId, 'deleted')
+            await removeLocalBackup(env, backup)
+            return { action: 'ack' }
+        } catch (failure) {
+            if (Number(failure?.status) === 401 && !refreshed) {
+                refreshed = true
+                try {
+                    credentials = await refreshOneDriveCredentials(env, connection, { ...credentials, expiresAt: 0 })
+                    continue
+                } catch (refreshFailure) {
+                    await updateBackupCleanup(env, backup.id, connectionId, 'blocked', { error: refreshFailure.message })
+                    await recordAlert(env, taskRequest(env, backup.id), {
+                        userId: backup.user_id,
+                        kind: 'backup_cleanup_auth_failed',
+                        severity: 'error',
+                        metadata: { backupId: String(backup.id), connectionId: String(connectionId) }
+                    })
+                    return { action: 'ack' }
+                }
+            }
+            if ([403, 400].includes(Number(failure?.status)) || /authorization|invalid_grant/i.test(String(failure?.message || ''))) {
+                await updateBackupCleanup(env, backup.id, connectionId, 'blocked', { error: failure.message })
+                await recordAlert(env, taskRequest(env, backup.id), {
+                    userId: backup.user_id,
+                    kind: 'backup_cleanup_auth_failed',
+                    severity: 'error',
+                    metadata: { backupId: String(backup.id), connectionId: String(connectionId) }
+                })
+                return { action: 'ack' }
+            }
+            return cleanupRetry(env, backup, copy, failure)
+        }
+    }
+}
+
 const purgeBackups = async (env) => {
     let rows
     try {
@@ -3610,14 +3827,23 @@ const purgeBackups = async (env) => {
             ORDER BY user_id, kind, created_at DESC`).bind().all()).results || []
     } catch { return }
     const counts = new Map()
+    let cleanupQueued = 0
     for (const row of rows) {
         const key = row.user_id + ':' + row.kind
         const count = counts.get(key) || 0
         counts.set(key, count + 1)
         if (count < backupRetention(env, row.kind)) continue
+        if (backupCleanupEnabled(env)) {
+            let copy = null
+            try { copy = await selectOneDriveBackupCopy(env, row.id) } catch {}
+            if (copy && ['active', 'pending'].includes(String(copy.cleanup_status || 'active'))) {
+                if (cleanupQueued < backupCleanupBatchSize && await scheduleBackupCleanup(env, row, copy)) cleanupQueued++
+                continue
+            }
+            if (copy && ['blocked', 'orphaned'].includes(String(copy.cleanup_status || ''))) continue
+        }
         try {
-            if (env.BACKUP_BUCKET?.delete) await env.BACKUP_BUCKET.delete(row.object_key)
-            await env.DB.prepare('DELETE FROM backups WHERE id = ?').bind(row.id).run()
+            await removeLocalBackup(env, row)
         } catch {}
     }
 }
@@ -9282,6 +9508,14 @@ export default {
                     return error('validation_failed', 400, request, env, 'User config is too large')
 
                 await env.DB.prepare('UPDATE users SET config = ? WHERE id = ?').bind(serialized, session.user_id).run()
+                if (Object.prototype.hasOwnProperty.call(patch, 'onedrive_cleanup_mode'))
+                    await recordAudit(env, request, {
+                        userId: session.user_id,
+                        action: 'backup.cleanup_mode.updated',
+                        resourceType: 'user_config',
+                        resourceId: session.user_id,
+                        outcome: 'success'
+                    })
                 return json({ result: true, user: publicUser({ ...session, config: serialized }) }, 200, request, env)
             }
 
@@ -10978,7 +11212,7 @@ export default {
             try {
                 const queuedTask = body.type ? null : await selectTask(env, taskId)
                 const type = body.type || (body.backupId ? backupTaskType : queuedTask?.type)
-                const result = await processTask(env, taskId, type)
+                const result = await processTask(env, taskId, type, body)
                 if (result.action === 'retry') message.retry?.({ delaySeconds: result.delaySeconds })
                 else if (result.action === 'defer') message.retry?.({ delaySeconds: result.delaySeconds })
                 else if (result.action === 'dead_letter') {
@@ -11021,6 +11255,7 @@ export {
     processMetadataTask,
     processLinkCheckTask,
     processBackupTask,
+    processBackupCleanupTask,
     purgeBackups,
     scheduleBackups,
     scheduleBrokenLinkChecks,

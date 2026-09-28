@@ -47,6 +47,7 @@ class BackupDatabase {
         const first = async () => {
             if (sql.includes('FROM sessions s')) return this.session()
             if (sql.includes('FROM usage_counters')) return null
+            if (sql.includes('FROM users WHERE id = ?')) return this.users.find(item => item.id === Number(values[0])) || null
             if (sql.includes('FROM oauth_states'))
                 return this.oauthStates.find(item => item.state_hash === values[0] && !item.used_at && item.expires_at > values[1]) || null
             if (sql.includes('FROM collection_collaborators') && sql.includes('SELECT role'))
@@ -63,6 +64,14 @@ class BackupDatabase {
                     return this.backups.find(item => item.id === values[0] && item.user_id === Number(values[1])) || null
                 if (sql.includes('id = ?')) return this.backups.find(item => item.id === values[0]) || null
                 return this.backups.find(item => item.user_id === Number(values[0]) && item.kind === values[1] && item.period_key === values[2]) || null
+            }
+            if (sql.includes('FROM external_backup_copies e')) {
+                const backupId = values[0]
+                const connectionId = values[1]
+                const copy = this.externalCopies.find(item => item.backup_id === backupId &&
+                    (connectionId === undefined || item.connection_id === connectionId) && item.status === 'succeeded')
+                const connection = copy && this.connections.find(item => item.id === copy.connection_id && item.provider === 'onedrive')
+                return copy && connection ? { ...copy, user_id: connection.user_id, provider: connection.provider, encrypted_credentials: connection.encrypted_credentials } : null
             }
             if (sql.includes('FROM backup_connections')) {
                 if (sql.includes('id = ? AND user_id = ?'))
@@ -141,8 +150,35 @@ class BackupDatabase {
                 return { meta: { changes: connection ? 1 : 0 } }
             }
             if (sql.includes('INSERT INTO external_backup_copies')) {
-                this.externalCopies.push({ backup_id: values[0], connection_id: values[1], status: sql.includes('\'succeeded\'') ? 'succeeded' : 'failed', remote_path: values[2] })
+                const succeeded = sql.includes('\'succeeded\'')
+                const item = {
+                    backup_id: values[0], connection_id: values[1], status: succeeded ? 'succeeded' : 'failed',
+                    remote_path: succeeded ? values[2] : null, remote_id: succeeded ? values[3] : null,
+                    cleanup_status: succeeded ? 'active' : 'active', cleanup_attempts: 0,
+                    last_cleanup_error: null, deleted_at: null
+                }
+                const existing = this.externalCopies.find(copy => copy.backup_id === item.backup_id && copy.connection_id === item.connection_id)
+                if (existing) Object.assign(existing, item)
+                else this.externalCopies.push(item)
                 return { meta: { changes: 1 } }
+            }
+            if (sql.includes('UPDATE external_backup_copies SET cleanup_status = \'pending\'')) {
+                const item = this.externalCopies.find(copy => copy.backup_id === values[0] && copy.connection_id === values[1])
+                if (item) {
+                    item.cleanup_status = 'pending'
+                    item.cleanup_attempts = Number(item.cleanup_attempts || 0) + 1
+                }
+                return { meta: { changes: item ? 1 : 0 } }
+            }
+            if (sql.includes('UPDATE external_backup_copies SET cleanup_status = ?')) {
+                const item = this.externalCopies.find(copy => copy.backup_id === values[3] && copy.connection_id === values[4])
+                if (item) Object.assign(item, { cleanup_status: values[0], last_cleanup_error: values[1], deleted_at: values[2] })
+                return { meta: { changes: item ? 1 : 0 } }
+            }
+            if (sql.includes('UPDATE external_backup_copies SET remote_id = ?')) {
+                const item = this.externalCopies.find(copy => copy.backup_id === values[1] && copy.connection_id === values[2])
+                if (item) item.remote_id = values[0]
+                return { meta: { changes: item ? 1 : 0 } }
             }
             if (sql.includes('INSERT OR IGNORE INTO backups')) {
                 if (this.backups.some(item => item.user_id === Number(values[1]) && item.kind === values[2] && item.period_key === values[3]))
@@ -371,6 +407,168 @@ test('manual and scheduled backups complete through the Queue and retain restore
     assert.equal(db.backups.filter(item => item.kind === 'monthly').length, 12)
     assert.equal(bucket.objects.has('d0'), false)
     assert.equal(bucket.objects.has('m0'), false)
+})
+
+test('OneDrive cleanup queues old remote files before removing the local restore point', async t => {
+    const db = new BackupDatabase()
+    const bucket = new MemoryBucket()
+    const queue = { messages: [], send: async message => queue.messages.push(message) }
+    const env = { ...envFor(db, bucket, queue), ONEDRIVE_BACKUP_CLEANUP_ENABLED: 'true', ONEDRIVE_BACKUP_CLEANUP_MODE: 'recycle_bin' }
+    const originalFetch = globalThis.fetch
+    const requests = []
+    globalThis.fetch = async (url, options = {}) => {
+        const current = typeof url === 'string' ? new Request(url, options) : url
+        requests.push(current)
+        if (current.url.includes('/v1.0/me/drive') && current.method === 'GET') return new Response('{}', { status: 200 })
+        if (current.method === 'DELETE') return new Response(null, { status: 204 })
+        return new Response('{}', { status: 200 })
+    }
+    t.after(() => { globalThis.fetch = originalFetch })
+
+    const connected = await worker.fetch(request('/v1/backup/connections', {
+        method: 'POST', headers: { Cookie: 'rd_session=test', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'onedrive', credentials: { accessToken: 'onedrive-secret' }, default: true })
+    }), env)
+    assert.equal(connected.status, 201)
+    const connection = db.connections[0]
+    const old = { id: 'old-daily', user_id: 1, kind: 'daily', period_key: 'old', status: 'succeeded', object_key: 'old-daily', size_bytes: 1, created_at: 1, updated_at: 1, completed_at: 1 }
+    db.backups = [...Array(31)].map((_, index) => ({
+        id: index === 0 ? old.id : 'daily-' + index, user_id: 1, kind: 'daily', period_key: 'day-' + index,
+        status: 'succeeded', object_key: index === 0 ? old.object_key : 'daily-' + index, size_bytes: 1,
+        created_at: index, updated_at: index, completed_at: index
+    }))
+    db.externalCopies = [{
+        backup_id: old.id, connection_id: connection.id, status: 'succeeded', remote_path: 'raindrop-backup-old-daily.json',
+        remote_id: 'remote-old', cleanup_status: 'active', cleanup_attempts: 0,
+        last_cleanup_error: null, deleted_at: null
+    }]
+    await bucket.put(old.object_key, encoder.encode('old'))
+
+    await purgeBackups(env)
+    assert.equal(db.backups.some(item => item.id === old.id), true)
+    assert.equal(queue.messages.length, 1)
+    assert.equal(queue.messages[0].type, 'backup_cleanup')
+
+    let acknowledged = false
+    await worker.queue({ messages: [{
+        body: queue.messages[0],
+        ack: () => { acknowledged = true },
+        retry: () => assert.fail('unexpected retry')
+    }] }, env)
+    assert.equal(acknowledged, true)
+    assert.equal(requests.at(-1).method, 'DELETE')
+    assert.equal(db.backups.some(item => item.id === old.id), false)
+    assert.equal(bucket.objects.has(old.object_key), false)
+})
+
+test('OneDrive cleanup uses the user-selected permanent deletion mode', async t => {
+    const db = new BackupDatabase()
+    db.users[0].config = JSON.stringify({ onedrive_cleanup_mode: 'permanent' })
+    const bucket = new MemoryBucket()
+    const queue = { messages: [], send: async message => queue.messages.push(message) }
+    const env = { ...envFor(db, bucket, queue), ONEDRIVE_BACKUP_CLEANUP_ENABLED: 'true', ONEDRIVE_BACKUP_CLEANUP_MODE: 'recycle_bin' }
+    const originalFetch = globalThis.fetch
+    const requests = []
+    globalThis.fetch = async (url, options = {}) => {
+        const current = typeof url === 'string' ? new Request(url, options) : url
+        requests.push(current)
+        if (current.url.endsWith('/v1.0/me/drive')) return Response.json({ id: 'drive-1' })
+        if (current.method === 'POST' && current.url.endsWith('/permanentDelete')) return new Response(null, { status: 204 })
+        if (current.method === 'DELETE') assert.fail('permanent cleanup must not use the recycle bin endpoint')
+        return Response.json({})
+    }
+    t.after(() => { globalThis.fetch = originalFetch })
+
+    const connected = await worker.fetch(request('/v1/backup/connections', {
+        method: 'POST', headers: { Cookie: 'rd_session=test', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'onedrive', credentials: { accessToken: 'onedrive-secret' }, default: true })
+    }), env)
+    assert.equal(connected.status, 201)
+    const connection = db.connections[0]
+    const backup = { id: 'permanent-old', user_id: 1, kind: 'daily', period_key: 'old', status: 'succeeded', object_key: 'permanent-old', size_bytes: 1, created_at: 1, updated_at: 1, completed_at: 1 }
+    db.backups = [backup]
+    db.externalCopies = [{ backup_id: backup.id, connection_id: connection.id, status: 'succeeded', remote_path: 'permanent-old.json', remote_id: 'remote-old', cleanup_status: 'pending', cleanup_attempts: 1, last_cleanup_error: null, deleted_at: null }]
+    await bucket.put(backup.object_key, encoder.encode('old'))
+
+    await worker.queue({ messages: [{ body: { taskId: backup.id, type: 'backup_cleanup', connectionId: connection.id }, ack: () => {}, retry: () => assert.fail('unexpected retry') }] }, env)
+    assert.equal(requests.map(item => item.method).join(','), 'GET,GET,POST')
+    assert.equal(db.backups.length, 0)
+})
+
+test('OneDrive cleanup resolves legacy paths and treats a missing remote file as orphaned', async t => {
+    const db = new BackupDatabase()
+    const bucket = new MemoryBucket()
+    const queue = { messages: [], send: async message => queue.messages.push(message) }
+    const env = { ...envFor(db, bucket, queue), ONEDRIVE_BACKUP_CLEANUP_ENABLED: 'true' }
+    const originalFetch = globalThis.fetch
+    let mode = 'resolve'
+    globalThis.fetch = async (url, options = {}) => {
+        const current = typeof url === 'string' ? new Request(url, options) : url
+        if (current.method === 'GET' && mode === 'resolve') return new Response(JSON.stringify({ id: 'legacy-remote' }), { status: 200 })
+        if (current.method === 'DELETE' && mode === 'resolve') return new Response(null, { status: 404 })
+        return new Response(null, { status: 404 })
+    }
+    t.after(() => { globalThis.fetch = originalFetch })
+    const connection = { id: 'connection-1', user_id: 1, provider: 'onedrive', encrypted_credentials: '', is_default: 1 }
+    db.connections = [connection]
+    const backup = { id: 'legacy', user_id: 1, kind: 'daily', period_key: 'legacy', status: 'succeeded', object_key: 'legacy', size_bytes: 1, created_at: 1, updated_at: 1, completed_at: 1 }
+    db.backups = [backup]
+    db.externalCopies = [{ backup_id: backup.id, connection_id: connection.id, status: 'succeeded', remote_path: 'legacy.json', remote_id: null, cleanup_status: 'pending', cleanup_attempts: 1, last_cleanup_error: null, deleted_at: null }]
+    await bucket.put(backup.object_key, encoder.encode('legacy'))
+
+    // Use the connection endpoint to create encrypted credentials for the in-memory database.
+    const connected = await worker.fetch(request('/v1/backup/connections', {
+        method: 'POST', headers: { Cookie: 'rd_session=test', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'onedrive', credentials: { accessToken: 'onedrive-secret' }, default: true })
+    }), env)
+    assert.equal(connected.status, 201)
+    db.externalCopies[0].connection_id = db.connections[0].id
+    await worker.queue({ messages: [{ body: { taskId: backup.id, type: 'backup_cleanup', connectionId: db.connections[0].id }, ack: () => {}, retry: () => assert.fail('unexpected retry') }] }, env)
+    assert.equal(db.backups.length, 0)
+
+    mode = 'missing'
+    const orphan = { ...backup, id: 'orphan', object_key: 'orphan', period_key: 'orphan' }
+    db.backups = [orphan]
+    db.externalCopies = [{ backup_id: orphan.id, connection_id: db.connections[0].id, status: 'succeeded', remote_path: 'missing.json', remote_id: null, cleanup_status: 'pending', cleanup_attempts: 1, last_cleanup_error: null, deleted_at: null }]
+    await bucket.put(orphan.object_key, encoder.encode('orphan'))
+    await worker.queue({ messages: [{ body: { taskId: orphan.id, type: 'backup_cleanup', connectionId: db.connections[0].id }, ack: () => {}, retry: () => assert.fail('unexpected retry') }] }, env)
+    assert.equal(db.backups.length, 1)
+    assert.equal(db.externalCopies[0].cleanup_status, 'orphaned')
+})
+
+test('OneDrive cleanup keeps the restore point and honors Retry-After on throttling', async t => {
+    const db = new BackupDatabase()
+    const bucket = new MemoryBucket()
+    const queue = { messages: [], send: async message => queue.messages.push(message) }
+    const env = { ...envFor(db, bucket, queue), ONEDRIVE_BACKUP_CLEANUP_ENABLED: 'true' }
+    const originalFetch = globalThis.fetch
+    let deleteCalls = 0
+    globalThis.fetch = async (url, options = {}) => {
+        const current = typeof url === 'string' ? new Request(url, options) : url
+        if (current.method === 'DELETE') {
+            deleteCalls++
+            return new Response(null, { status: 429, headers: { 'Retry-After': '7' } })
+        }
+        return new Response('{}', { status: 200 })
+    }
+    t.after(() => { globalThis.fetch = originalFetch })
+
+    const connected = await worker.fetch(request('/v1/backup/connections', {
+        method: 'POST', headers: { Cookie: 'rd_session=test', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'onedrive', credentials: { accessToken: 'onedrive-secret' }, default: true })
+    }), env)
+    assert.equal(connected.status, 201)
+    const backup = { id: 'throttled', user_id: 1, kind: 'daily', period_key: 'throttled', status: 'succeeded', object_key: 'throttled', size_bytes: 1, created_at: 1, updated_at: 1, completed_at: 1 }
+    db.backups = [backup]
+    db.externalCopies = [{ backup_id: backup.id, connection_id: db.connections[0].id, status: 'succeeded', remote_path: 'throttled.json', remote_id: 'remote-throttled', cleanup_status: 'pending', cleanup_attempts: 1, last_cleanup_error: null, deleted_at: null }]
+    await bucket.put(backup.object_key, encoder.encode('throttled'))
+
+    let retry
+    await worker.queue({ messages: [{ body: { taskId: backup.id, type: 'backup_cleanup', connectionId: db.connections[0].id }, ack: () => assert.fail('unexpected ack'), retry: value => { retry = value } }] }, env)
+    assert.equal(deleteCalls, 1)
+    assert.deepEqual(retry, { delaySeconds: 7 })
+    assert.equal(db.backups.length, 1)
+    assert.equal(db.externalCopies[0].cleanup_status, 'pending')
 })
 
 test('external destinations verify independently, hide credentials, and receive the default backup copy', async t => {

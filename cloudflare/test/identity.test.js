@@ -18,6 +18,7 @@ class MemoryDatabase {
         this.usage = []
         this.collaborators = []
         this.changes = []
+        this.audits = []
         this.nextChangeVersion = 1
         this.batchCalls = 0
         this.beforeBatch = null
@@ -238,6 +239,10 @@ class MemoryDatabase {
             if (sql.includes('UPDATE users SET config')) {
                 const user = this.users.find(item => item.id === values[1])
                 user.config = values[0]
+                return { meta: { changes: 1 } }
+            }
+            if (sql.includes('INSERT INTO audit_records')) {
+                this.audits.push({ action: values[2], resource_type: values[3], resource_id: values[4], outcome: values[5] })
                 return { meta: { changes: 1 } }
             }
             if (sql.includes('UPDATE email_tokens SET used_at')) {
@@ -594,6 +599,27 @@ test('beta signup verifies Turnstile, keeps credentials private, and creates rev
         raindrops_buttons: ['select', 'tags', 'edit', 'remove'],
         raindrops_click: 'new_tab'
     })
+
+    const cleanupMode = await worker.fetch(new Request('https://api.example.test/v1/user', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ config: { onedrive_cleanup_mode: 'permanent' } })
+    }), env(db))
+    assert.equal(cleanupMode.status, 200)
+    assert.equal((await cleanupMode.json()).user.config.onedrive_cleanup_mode, 'permanent')
+    assert.deepEqual(db.audits.at(-1), {
+        action: 'backup.cleanup_mode.updated',
+        resource_type: 'user_config',
+        resource_id: '1',
+        outcome: 'success'
+    })
+
+    const invalidCleanupMode = await worker.fetch(new Request('https://api.example.test/v1/user', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ config: { onedrive_cleanup_mode: 'erase_everything' } })
+    }), env(db))
+    assert.equal(invalidCleanupMode.status, 400)
 
     const invalidConfig = await worker.fetch(new Request('https://api.example.test/v1/user', {
         method: 'PUT',
